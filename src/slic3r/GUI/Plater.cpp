@@ -2250,7 +2250,7 @@ void Sidebar::update_all_preset_comboboxes()
             const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
             if (cfg.has("printhost_apikey") && (host_type != htSimplyPrint))
                 apikey = cfg.opt_string("printhost_apikey");
-            print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate : MainFrame::PrintSelectType::eSendGcode;
+            print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::eSendBambuConnect : MainFrame::PrintSelectType::eSendGcode;
         }
 
         p_mainframe->load_printer_url(url, apikey);
@@ -4233,6 +4233,7 @@ struct Plater::priv
     void on_action_print_all(SimpleEvent&);
     void on_action_export_gcode(SimpleEvent&);
     void on_action_send_gcode(SimpleEvent&);
+    void on_action_send_bamcu_conect(SimpleEvent&);
     void on_action_export_sliced_file(SimpleEvent&);
     void on_action_export_all_sliced_file(SimpleEvent&);
     void on_action_select_sliced_plate(wxCommandEvent& evt);
@@ -4770,6 +4771,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         q->Bind(EVT_GLTOOLBAR_PRINT_ALL, &priv::on_action_print_all, this);
         q->Bind(EVT_GLTOOLBAR_EXPORT_GCODE, &priv::on_action_export_gcode, this);
         q->Bind(EVT_GLTOOLBAR_SEND_GCODE, &priv::on_action_send_gcode, this);
+        q->Bind(EVT_GLTOOLBAR_SEND_BAMBU_CONNECT, &priv::on_action_send_bamcu_conect, this);
         q->Bind(EVT_GLTOOLBAR_EXPORT_SLICED_FILE, &priv::on_action_export_sliced_file, this);
         q->Bind(EVT_GLTOOLBAR_EXPORT_ALL_SLICED_FILE, &priv::on_action_export_all_sliced_file, this);
         q->Bind(EVT_GLTOOLBAR_SEND_TO_PRINTER, &priv::on_action_export_to_sdcard, this);
@@ -9446,6 +9448,48 @@ void Plater::priv::on_action_send_gcode(SimpleEvent&)
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received export gcode event\n" ;
         q->send_gcode_legacy();
+    }
+}
+
+void Plater::priv::on_action_send_bamcu_conect(SimpleEvent&)
+{
+    if (q != nullptr) {
+        BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received send to Bambu Connect event\n";
+
+        // Export the current plate
+        q->send_gcode();
+
+        // Get print job data
+        PrintJobData print_job_data = q->get_print_job_data();
+
+        // Validate 3MF path
+        if (print_job_data.path_3mf.empty()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": 3MF path is empty\n";
+            return;
+        }
+
+        // Get export filename
+        wxString export_path = q->get_export_gcode_filename("", false, nullptr);
+        if (export_path.empty()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Export path is empty\n";
+            return;
+        }
+
+        // URL-encode the path and filename
+        std::string encoded_path = Http::url_encode(export_path.ToStdString());
+        wxFileName filename(export_path);
+        std::string encoded_name = Http::url_encode(filename.GetFullName().ToStdString());
+
+        // Construct the bambu-connect:// URL
+        std::string url = "bambu-connect://import-file?path=" + encoded_path +
+                         "&name=" + encoded_name + "&version=1.0.0";
+
+        // Launch the URL with default browser/handler
+        if (!wxLaunchDefaultBrowser(url)) {
+            MessageDialog dialog(q, _L("Failed to launch Bambu Connect. Please make sure Bambu Connect is installed."),
+                               _L("Error"), wxOK | wxICON_ERROR);
+            dialog.ShowModal();
+        }
     }
 }
 
