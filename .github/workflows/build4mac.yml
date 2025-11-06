@@ -10,52 +10,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  fetch_upstream:
-    name: Fetch Upstream Nightly
-    runs-on: ubuntu-latest
-    outputs:
-      upstream-sha: ${{ steps.fetch.outputs.sha }}
-      version: ${{ steps.fetch.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          
-      - name: Fetch upstream nightly-builds tag
-        id: fetch
-        run: |
-          git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
-          git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
-          UPSTREAM_SHA=$(git rev-parse upstream-nightly)
-          echo "sha=${UPSTREAM_SHA}" >> $GITHUB_OUTPUT
-          echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
-          
-          # Get version from upstream tag
-          git checkout ${UPSTREAM_SHA}
-          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
-          echo "version=${ver_pure}" >> $GITHUB_OUTPUT
-          echo "Version: ${ver_pure}"
-
   build_mac_arm64:
     name: Build Mac ARM64
-    needs: fetch_upstream
     runs-on: macos-14
+    permissions:
+      contents: write
     env:
       date:
       ver:
-      ver_pure: ${{ needs.fetch_upstream.outputs.version }}
+      ver_pure:
     
     steps:
-      - name: Checkout upstream nightly
+      - name: Checkout nightly-builds-with-bc branch
         uses: actions/checkout@v5
         with:
-          ref: ${{ needs.fetch_upstream.outputs.upstream-sha }}
+          ref: nightly-builds-with-bc
+          fetch-depth: 0
           lfs: 'true'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Fetch and merge upstream nightly-builds
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Add upstream remote if it doesn't exist
+          git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
+          
+          # Fetch the nightly-builds tag from upstream
+          git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
+          
+          # Get the upstream SHA
+          UPSTREAM_SHA=$(git rev-parse upstream-nightly)
+          echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
+          
+          # Try to merge upstream changes into nightly-builds-with-bc
+          if git merge ${UPSTREAM_SHA} --no-edit -m "Merge upstream nightly-builds tag"; then
+            echo "Merge successful"
+          else
+            echo "Merge conflict detected - manual resolution required"
+            git merge --abort
+            exit 1
+          fi
+          
+          # Push the updated branch back to your fork
+          git push origin nightly-builds-with-bc
           
       - name: Get date and version
         run: |
-          ver_pure="${{ needs.fetch_upstream.outputs.version }}"
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
           ver="V${ver_pure}-nightly"
           echo "ver=$ver" >> $GITHUB_ENV
           echo "ver_pure=$ver_pure" >> $GITHUB_ENV
@@ -147,25 +150,30 @@ jobs:
 
   release:
     name: Deploy to Release
-    needs: [fetch_upstream, build_mac_arm64]
+    needs: [build_mac_arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     
     steps:
+      - name: Checkout nightly-builds-with-bc
+        uses: actions/checkout@v5
+        with:
+          ref: nightly-builds-with-bc
+      
+      - name: Get version and SHA
+        id: get_version
+        run: |
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          echo "version=${ver_pure}" >> $GITHUB_OUTPUT
+          git_sha=$(git rev-parse HEAD)
+          echo "sha=${git_sha}" >> $GITHUB_OUTPUT
+      
       - name: Download artifacts
         uses: actions/download-artifact@v6
         with:
           pattern: OrcaSlicer_Mac_arm64_*
           merge-multiple: true
-      
-      - name: Get file name
-        id: get_filename
-        run: |
-          DMG_FILE=$(ls OrcaSlicer_Mac_arm64_*.dmg | head -1)
-          echo "dmg_file=${DMG_FILE}" >> $GITHUB_OUTPUT
-          VALIDATOR_FILE=$(ls OrcaSlicer_profile_validator_Mac_arm64_*.dmg 2>/dev/null | head -1 || echo "")
-          echo "validator_file=${VALIDATOR_FILE}" >> $GITHUB_OUTPUT
       
       - name: Create or update nightly release
         uses: softprops/action-gh-release@v2
@@ -173,12 +181,16 @@ jobs:
           tag_name: nightly-mac-arm64
           name: "Nightly Mac ARM64 Build"
           body: |
-            Automated nightly build from upstream OrcaSlicer nightly-builds tag
+            Automated nightly build from nightly-builds-with-bc branch (synced with upstream)
             
-            **Build Date:** ${{ needs.fetch_upstream.outputs.version }}
-            **Upstream SHA:** ${{ needs.fetch_upstream.outputs.upstream-sha }}
+            **Version:** ${{ steps.get_version.outputs.version }}
+            **Branch SHA:** ${{ steps.get_version.outputs.sha }}
             
-            This is an automated build for macOS (ARM64 only - Apple Silicon).
+            This build includes:
+            - Latest changes from upstream OrcaSlicer nightly-builds tag
+            - Custom modifications from nightly-builds-with-bc branch
+            
+            Built for macOS (ARM64 only - Apple Silicon).
             
             **Note:** These builds are unsigned and not notarized. You will need to:
             1. Right-click the app and choose "Open" the first time
