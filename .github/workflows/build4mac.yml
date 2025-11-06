@@ -117,22 +117,60 @@ jobs:
         run: |
           ./build_release_macos.sh -s -n -x -a arm64 -t 10.15 -1
 
-      - name: Create DMG
+      - name: Sign app and notarize
         working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
         run: |
+          # Set up certificate and keychain
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+          security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+
+          # Sign the apps
+          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app
+
+          # Sign OrcaSlicer_profile_validator.app if it exists
+          if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
+            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app
+          fi
+
+          # Create main OrcaSlicer DMG
           mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg
           rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/*
           cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/
           ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/Applications
           hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
-          
-          # Create profile validator DMG if it exists
+          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+          # Create separate OrcaSlicer_profile_validator DMG if the app exists
           if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
             mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg
             rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/*
             cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/
             ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/Applications
             hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          fi
+
+          # Notarize main DMG
+          xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
+          xcrun notarytool submit "OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+          xcrun stapler staple OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+          # Notarize profile validator DMG if it exists
+          if [ -f "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" ]; then
+            xcrun notarytool submit "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+            xcrun stapler staple OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
           fi
 
       - name: Upload artifacts
@@ -191,10 +229,8 @@ jobs:
             - Custom modifications from nightly-builds-with-bc branch
             
             Built for macOS (ARM64 only - Apple Silicon).
-            
-            **Note:** These builds are unsigned and not notarized. You will need to:
-            1. Right-click the app and choose "Open" the first time
-            2. Or run: `xattr -dr com.apple.quarantine /Applications/OrcaSlicer.app`
+
+            **Note:** These builds are signed and notarized by Apple. You can install and run them directly without any security warnings.
           files: |
             OrcaSlicer_Mac_arm64_*.dmg
           prerelease: true
