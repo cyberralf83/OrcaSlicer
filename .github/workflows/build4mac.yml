@@ -1,0 +1,191 @@
+name: Build Mac ARM64 from Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Run daily at 2 AM UTC
+  workflow_dispatch: # Allow manual trigger
+  
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  fetch_upstream:
+    name: Fetch Upstream Nightly
+    runs-on: ubuntu-latest
+    outputs:
+      upstream-sha: ${{ steps.fetch.outputs.sha }}
+      version: ${{ steps.fetch.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          
+      - name: Fetch upstream nightly-builds tag
+        id: fetch
+        run: |
+          git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
+          git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
+          UPSTREAM_SHA=$(git rev-parse upstream-nightly)
+          echo "sha=${UPSTREAM_SHA}" >> $GITHUB_OUTPUT
+          echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
+          
+          # Get version from upstream tag
+          git checkout ${UPSTREAM_SHA}
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          echo "version=${ver_pure}" >> $GITHUB_OUTPUT
+          echo "Version: ${ver_pure}"
+
+  build_mac_arm64:
+    name: Build Mac ARM64
+    needs: fetch_upstream
+    runs-on: macos-14
+    env:
+      date:
+      ver:
+      ver_pure: ${{ needs.fetch_upstream.outputs.version }}
+    
+    steps:
+      - name: Checkout upstream nightly
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.fetch_upstream.outputs.upstream-sha }}
+          lfs: 'true'
+          
+      - name: Get date and version
+        run: |
+          ver_pure="${{ needs.fetch_upstream.outputs.version }}"
+          ver="V${ver_pure}-nightly"
+          echo "ver=$ver" >> $GITHUB_ENV
+          echo "ver_pure=$ver_pure" >> $GITHUB_ENV
+          echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
+        shell: bash
+      
+      # Cache handling
+      - name: Generate cache key
+        id: cache_key
+        run: |
+          echo "cache-key=macos-14-cache-orcaslicer_deps-build-${{ hashFiles('deps/**') }}" >> $GITHUB_OUTPUT
+          echo "cache-path=${{ github.workspace }}/deps/build" >> $GITHUB_OUTPUT
+      
+      - name: Load cached deps
+        id: cache_deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.cache_key.outputs.cache-path }}
+          key: ${{ steps.cache_key.outputs.cache-key }}
+      
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"  # use most recent 3.28.x version
+      
+      # Build dependencies if cache miss
+      - name: Install build tools
+        if: steps.cache_deps.outputs.cache-hit != 'true'
+        run: |
+          brew install automake texinfo libtool
+          brew list
+          brew uninstall --ignore-dependencies zstd
+      
+      - name: Build dependencies
+        if: steps.cache_deps.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          ./build_release_macos.sh -dx -a arm64 -t 10.15 -1
+          cd "${{ github.workspace }}/deps/build/arm64"
+          find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +
+          brew install zstd
+      
+      - name: Install tools for build
+        run: |
+          brew install libtool
+          mkdir -p ${{ github.workspace }}/deps/build
+
+      - name: Free disk space
+        run: |
+          df -hI /dev/disk3s1s1
+          sudo find /Applications -maxdepth 1 -type d -name "Xcode_*.app" ! -name "Xcode_15.4.app" -exec rm -rf {} +
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
+          df -hI /dev/disk3s1s1
+
+      - name: Build OrcaSlicer
+        working-directory: ${{ github.workspace }}
+        run: |
+          ./build_release_macos.sh -s -n -x -a arm64 -t 10.15 -1
+
+      - name: Create DMG
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg
+          rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/*
+          cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/
+          ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/Applications
+          hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+          
+          # Create profile validator DMG if it exists
+          if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
+            mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg
+            rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/*
+            cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/
+            ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/Applications
+            hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: OrcaSlicer_Mac_arm64_${{ env.ver }}
+          path: ${{ github.workspace }}/OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+      - name: Upload profile validator DMG
+        uses: actions/upload-artifact@v5
+        with:
+          name: OrcaSlicer_profile_validator_Mac_arm64_DMG_${{ env.ver }}
+          path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          if-no-files-found: ignore
+
+  release:
+    name: Deploy to Release
+    needs: [fetch_upstream, build_mac_arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: OrcaSlicer_Mac_arm64_*
+          merge-multiple: true
+      
+      - name: Get file name
+        id: get_filename
+        run: |
+          DMG_FILE=$(ls OrcaSlicer_Mac_arm64_*.dmg | head -1)
+          echo "dmg_file=${DMG_FILE}" >> $GITHUB_OUTPUT
+          VALIDATOR_FILE=$(ls OrcaSlicer_profile_validator_Mac_arm64_*.dmg 2>/dev/null | head -1 || echo "")
+          echo "validator_file=${VALIDATOR_FILE}" >> $GITHUB_OUTPUT
+      
+      - name: Create or update nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly-mac-arm64
+          name: "Nightly Mac ARM64 Build"
+          body: |
+            Automated nightly build from upstream OrcaSlicer nightly-builds tag
+            
+            **Build Date:** ${{ needs.fetch_upstream.outputs.version }}
+            **Upstream SHA:** ${{ needs.fetch_upstream.outputs.upstream-sha }}
+            
+            This is an automated build for macOS (ARM64 only - Apple Silicon).
+            
+            **Note:** These builds are unsigned and not notarized. You will need to:
+            1. Right-click the app and choose "Open" the first time
+            2. Or run: `xattr -dr com.apple.quarantine /Applications/OrcaSlicer.app`
+          files: |
+            OrcaSlicer_Mac_arm64_*.dmg
+          prerelease: true
+          draft: false
+          fail_on_unmatched_files: true
+
