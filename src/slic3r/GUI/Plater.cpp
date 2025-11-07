@@ -31,7 +31,6 @@
 #include <wx/dnd.h>
 #include <wx/progdlg.h>
 #include <wx/string.h>
-#include <wx/filename.h>
 #include <wx/wupdlock.h>
 #include <wx/numdlg.h>
 #include <wx/debug.h>
