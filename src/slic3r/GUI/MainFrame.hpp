@@ -246,8 +246,7 @@ public:
         eSendToPrinterAll    = 6,
         eUploadGcode         = 7,
         eExportAllSlicedFile = 8,
-        ePrintMultiMachine   = 9,
-        eSendBambuConnect    = 10
+        ePrintMultiMachine   = 9
     };
 
     void update_layout();

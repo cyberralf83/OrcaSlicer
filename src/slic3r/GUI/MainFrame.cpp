@@ -1614,14 +1614,14 @@ wxBoxSizer* MainFrame::create_side_tools()
     wxBoxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
 
     m_slice_select = eSlicePlate;
-    m_print_select = eSendBambuConnect;
+    m_print_select = ePrintPlate;
 
     auto slice_panel = new wxPanel(this,wxID_ANY,wxDefaultPosition,wxDefaultSize,wxTRANSPARENT_WINDOW);
     auto print_panel = new wxPanel(this,wxID_ANY,wxDefaultPosition,wxDefaultSize,wxTRANSPARENT_WINDOW);
 
     m_slice_btn = new SideButton(slice_panel, _L("Slice plate"), "");
     m_slice_option_btn = new SideButton(slice_panel, "", "sidebutton_dropdown", 0, 14);
-    m_print_btn = new SideButton(print_panel, _L("Send to BC"), "");
+    m_print_btn = new SideButton(print_panel, _L("Print plate"), "");
     m_print_option_btn = new SideButton(print_panel, "", "sidebutton_dropdown", 0, 14);
 
     auto slice_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -1743,8 +1743,6 @@ wxBoxSizer* MainFrame::create_side_tools()
                 wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_TO_PRINTER));
             else if (m_print_select == eSendToPrinterAll)
                 wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_TO_PRINTER_ALL));
-            else if (m_print_select == eSendBambuConnect)
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_BAMBU_CONNECT));
             /* else if (m_print_select == ePrintMultiMachine)
                  wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_PRINT_MULTI_MACHINE));*/
         });
@@ -1889,17 +1887,6 @@ wxBoxSizer* MainFrame::create_side_tools()
                     p->Dismiss();
                     });
 
-                SideButton* send_bambu_connect_btn = new SideButton(p, _L("Send to Bambu Connect"), "");
-                send_bambu_connect_btn->SetCornerRadius(0);
-                send_bambu_connect_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Send to BC"));
-                    m_print_select = eSendBambuConnect;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
-
                 bool support_send = true;
                 bool support_print_all = true;
 
@@ -1941,7 +1928,6 @@ wxBoxSizer* MainFrame::create_side_tools()
                 }
                 p->append_button(export_sliced_file_btn);
                 p->append_button(export_all_sliced_file_btn);
-                p->append_button(send_bambu_connect_btn);
                 SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
                 export_gcode_btn->SetCornerRadius(0);
                 export_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
@@ -2095,14 +2081,6 @@ bool MainFrame::get_enable_print_status()
         }
     }
     else if (m_print_select == ePrintMultiMachine)
-    {
-        if (!current_plate->is_slice_result_ready_for_print())
-        {
-            enable = false;
-        }
-        enable = enable && !is_all_plates;
-    }
-    else if (m_print_select == eSendBambuConnect)
     {
         if (!current_plate->is_slice_result_ready_for_print())
         {
@@ -3778,13 +3756,6 @@ void MainFrame::set_print_button_to_default(PrintSelectType select_type)
         m_print_select = eExportGcode;
         if (m_print_enable)
             m_print_enable = get_enable_print_status() && can_send_gcode();
-        m_print_btn->Enable(m_print_enable);
-        this->Layout();
-    } else if (select_type == PrintSelectType::eSendBambuConnect) {
-        m_print_btn->SetLabel(_L("Send to BC"));
-        m_print_select = eSendBambuConnect;
-        if (m_print_enable)
-            m_print_enable = get_enable_print_status();
         m_print_btn->Enable(m_print_enable);
         this->Layout();
     } else {
