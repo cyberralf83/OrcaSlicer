@@ -31,11 +31,20 @@ jobs:
           
       - name: Fetch and merge upstream nightly-builds
         run: |
+          # Check if PAT_TOKEN is available
+          if [ -z "$PAT_TOKEN" ]; then
+            echo "ERROR: PAT_TOKEN secret is not set!"
+            echo "Please create a Personal Access Token with 'repo' and 'workflow' scopes"
+            echo "and add it as a secret named PAT_TOKEN in your repository settings:"
+            echo "https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Configure git to use the PAT for authentication
-          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
+          git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
 
           # Add upstream remote if it doesn't exist
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
@@ -115,6 +124,7 @@ jobs:
             fi
           fi
         env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
           
       - name: Get date and version
