@@ -27,34 +27,92 @@ jobs:
           ref: nightly-builds-with-bc
           fetch-depth: 0
           lfs: 'true'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
           
       - name: Fetch and merge upstream nightly-builds
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Add upstream remote if it doesn't exist
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
-          
+
           # Fetch the nightly-builds tag from upstream
           git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
-          
+
           # Get the upstream SHA
           UPSTREAM_SHA=$(git rev-parse upstream-nightly)
           echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
-          
-          # Try to merge upstream changes into nightly-builds-with-bc
-          if git merge ${UPSTREAM_SHA} --no-edit -m "Merge upstream nightly-builds tag"; then
-            echo "Merge successful"
+
+          # Check if we've already merged this commit
+          if git merge-base --is-ancestor ${UPSTREAM_SHA} HEAD; then
+            echo "Already up to date with upstream"
           else
-            echo "Merge conflict detected - manual resolution required"
-            git merge --abort
-            exit 1
+            # Try to merge upstream changes - don't auto-commit
+            if git merge ${UPSTREAM_SHA} --no-commit --no-ff; then
+              # Clean merge - commit and push
+              git commit -m "Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"
+              git push origin nightly-builds-with-bc
+              echo "Merge successful"
+            else
+              # Conflicts detected
+              echo "Merge conflicts detected"
+
+              # Get list of conflicted files
+              CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
+              echo "Conflicted files:"
+              echo "$CONFLICTED_FILES"
+
+              # Accept all non-conflicting changes and keep conflicted files from our branch
+              git diff --name-only --diff-filter=U | while read file; do
+                echo "Keeping our version of: $file"
+                git checkout --ours "$file"
+                git add "$file"
+              done
+
+              # Commit the partial merge
+              git commit -m "Partial merge of upstream nightly-builds (${UPSTREAM_SHA:0:8}) - conflicts pending"
+
+              # Create a new branch for the PR
+              CONFLICT_BRANCH="merge-conflict-$(date +%Y%m%d-%H%M%S)"
+              git checkout -b "$CONFLICT_BRANCH"
+
+              # Reset to before our partial merge to show real conflicts
+              git reset --hard HEAD~1
+              git merge ${UPSTREAM_SHA} --no-commit --no-ff || true
+
+              # Commit with conflict markers for PR
+              git commit -a -m "WIP: Merge conflicts from upstream nightly-builds (${UPSTREAM_SHA:0:8})"
+
+              # Push conflict branch
+              git push origin "$CONFLICT_BRANCH"
+
+              # Switch back to main branch with partial merge
+              git checkout nightly-builds-with-bc
+              git push origin nightly-builds-with-bc
+
+              # Create PR using gh CLI
+              gh pr create \
+                --base nightly-builds-with-bc \
+                --head "$CONFLICT_BRANCH" \
+                --title "Resolve merge conflicts from upstream nightly-builds ($(date +%Y-%m-%d))" \
+                --body "Automated merge from upstream encountered conflicts in the following files:
+
+              \`\`\`
+              $CONFLICTED_FILES
+              \`\`\`
+
+              **Upstream SHA:** ${UPSTREAM_SHA}
+
+              The nightly-builds-with-bc branch has been updated with all non-conflicting changes. This PR contains the conflicted files for manual resolution.
+
+              Please review and resolve the conflicts, then merge this PR." || echo "PR creation failed - may already exist"
+
+              echo "Continuing build with non-conflicting changes applied"
+            fi
           fi
-          
-          # Push the updated branch back to your fork
-          git push origin nightly-builds-with-bc
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
           
       - name: Get date and version
         run: |
