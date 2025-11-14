@@ -21,41 +21,138 @@ jobs:
       ver_pure:
     
     steps:
+      - name: Validate PAT token secret
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "$PAT_TOKEN" ]; then
+            echo "::error::PAT_TOKEN secret is not set. Create a PAT with 'repo' and 'workflow' scopes and add it as PAT_TOKEN in repository secrets."
+            echo "Repository secrets: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+
       - name: Checkout nightly-builds-with-bc branch
         uses: actions/checkout@v5
         with:
           ref: nightly-builds-with-bc
           fetch-depth: 0
           lfs: 'true'
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
+          persist-credentials: false
           
       - name: Fetch and merge upstream nightly-builds
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
+          set -x  # Enable command echoing
+
+          echo "=== Configuring Git user ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Add upstream remote if it doesn't exist
+
+          echo "=== Configuring Git remote with PAT ==="
+          # First, show the current remote URL (will be sanitized in logs)
+          echo "Current origin URL:"
+          git remote get-url origin
+
+          # Set the new URL with PAT token embedded directly
+          git remote set-url origin "https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}"
+
+          # Verify it was set (GitHub Actions will automatically sanitize the token in logs)
+          echo "Updated origin URL (token will be hidden):"
+          git remote get-url origin
+
+          # Show all git config related to credentials/auth for debugging
+          echo "Git credential config:"
+          git config --local --get-regexp 'credential.*' || echo "No credential config"
+          git config --local --get-regexp 'http.*' || echo "No http config"
+
+          echo "=== Adding upstream remote ==="
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
-          
-          # Fetch the nightly-builds tag from upstream
+
+          echo "=== Fetching upstream nightly-builds tag ==="
           git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
-          
-          # Get the upstream SHA
+
+          echo "=== Getting upstream SHA ==="
           UPSTREAM_SHA=$(git rev-parse upstream-nightly)
           echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
-          
-          # Try to merge upstream changes into nightly-builds-with-bc
-          if git merge ${UPSTREAM_SHA} --no-edit -m "Merge upstream nightly-builds tag"; then
-            echo "Merge successful"
+
+          echo "=== Checking if already merged ==="
+          if git merge-base --is-ancestor ${UPSTREAM_SHA} HEAD; then
+            echo "Already up to date with upstream"
           else
-            echo "Merge conflict detected - manual resolution required"
-            git merge --abort
-            exit 1
+            echo "=== Attempting merge ==="
+            if git merge ${UPSTREAM_SHA} --no-commit --no-ff; then
+              echo "=== Clean merge detected - committing ==="
+              git commit -m "Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"
+
+              echo "=== Pushing to nightly-builds-with-bc ==="
+              git push origin nightly-builds-with-bc
+              echo "Merge successful"
+            else
+              echo "=== Merge conflicts detected ==="
+
+              echo "=== Getting list of conflicted files ==="
+              CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
+              echo "Conflicted files:"
+              echo "$CONFLICTED_FILES"
+
+              echo "=== Resolving conflicts by keeping our versions ==="
+              git diff --name-only --diff-filter=U | while read file; do
+                echo "Keeping our version of: $file"
+                git checkout --ours "$file"
+                git add "$file"
+              done
+
+              echo "=== Committing partial merge ==="
+              git commit -m "Partial merge of upstream nightly-builds (${UPSTREAM_SHA:0:8}) - conflicts pending"
+              PARTIAL_MERGE_SHA=$(git rev-parse HEAD)
+              echo "Partial merge SHA: ${PARTIAL_MERGE_SHA}"
+
+              echo "=== Pushing partial merge to nightly-builds-with-bc ==="
+              git push origin nightly-builds-with-bc
+
+              echo "=== Creating conflict branch for PR ==="
+              CONFLICT_BRANCH="merge-conflict-$(date +%Y%m%d-%H%M%S)"
+              echo "Conflict branch name: ${CONFLICT_BRANCH}"
+              git checkout -b "$CONFLICT_BRANCH" HEAD~1
+
+              echo "=== Re-attempting merge to show conflicts ==="
+              git merge ${UPSTREAM_SHA} --no-commit --no-ff || true
+
+              echo "=== Committing conflicts for PR ==="
+              git commit -a -m "WIP: Merge conflicts from upstream nightly-builds (${UPSTREAM_SHA:0:8})"
+
+              echo "=== Pushing conflict branch ==="
+              git push origin "$CONFLICT_BRANCH"
+
+              echo "=== Switching back to nightly-builds-with-bc ==="
+              git checkout nightly-builds-with-bc
+
+              echo "=== Creating PR for conflict resolution ==="
+              gh pr create \
+                --base nightly-builds-with-bc \
+                --head "$CONFLICT_BRANCH" \
+                --title "Resolve merge conflicts from upstream nightly-builds ($(date +%Y-%m-%d))" \
+                --body "Automated merge from upstream encountered conflicts in the following files:
+
+              \`\`\`
+              $CONFLICTED_FILES
+              \`\`\`
+
+              **Upstream SHA:** ${UPSTREAM_SHA}
+
+              The nightly-builds-with-bc branch has been updated with all non-conflicting changes. This PR contains the conflicted files for manual resolution.
+
+              Please review and resolve the conflicts, then merge this PR." || echo "PR creation failed - may already exist"
+
+              echo "Continuing build with non-conflicting changes applied"
+            fi
           fi
-          
-          # Push the updated branch back to your fork
-          git push origin nightly-builds-with-bc
-          
+
+          set +x  # Disable command echoing
+
       - name: Get date and version
         run: |
           ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
@@ -182,7 +279,7 @@ jobs:
       - name: Upload profile validator DMG
         uses: actions/upload-artifact@v5
         with:
-          name: OrcaSlicer_profile_validator_Mac_arm64_DMG_${{ env.ver }}
+          name: OrcaSlicer_Mac_arm64_profile_validator_${{ env.ver }}
           path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
           if-no-files-found: ignore
 
@@ -212,7 +309,28 @@ jobs:
         with:
           pattern: OrcaSlicer_Mac_arm64_*
           merge-multiple: true
-      
+
+      - name: Delete old release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the release ID for the nightly-mac-arm64 tag
+          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/nightly-mac-arm64 --jq '.id' 2>/dev/null || echo "")
+
+          if [ -n "$RELEASE_ID" ]; then
+            echo "Found release ID: $RELEASE_ID"
+            # Get all assets for this release and delete DMG files
+            gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq '.[].id' | while read ASSET_ID; do
+              ASSET_NAME=$(gh api repos/${{ github.repository }}/releases/assets/$ASSET_ID --jq '.name')
+              if [[ "$ASSET_NAME" == OrcaSlicer_Mac_arm64_*.dmg ]] || [[ "$ASSET_NAME" == OrcaSlicer_profile_validator_Mac_arm64_*.dmg ]]; then
+                echo "Deleting old asset: $ASSET_NAME (ID: $ASSET_ID)"
+                gh api -X DELETE repos/${{ github.repository }}/releases/assets/$ASSET_ID || true
+              fi
+            done
+          else
+            echo "Release not found or doesn't exist yet"
+          fi
+
       - name: Create or update nightly release
         uses: softprops/action-gh-release@v2
         with:
