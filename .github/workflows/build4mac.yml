@@ -51,7 +51,20 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           echo "=== Configuring Git remote with PAT ==="
+          # First, show the current remote URL (will be sanitized in logs)
+          echo "Current origin URL:"
+          git remote get-url origin
+
+          # Set the new URL with PAT token
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
+
+          # Verify it was set (GitHub Actions will automatically sanitize the token in logs)
+          echo "Updated origin URL (token will be hidden):"
+          git remote get-url origin
+
+          # Also configure git to use the token for this specific domain
+          git config --local credential.helper ""
+          git config --local --add url."https://x-access-token:${PAT_TOKEN}@github.com/".insteadOf "https://github.com/"
 
           echo "=== Adding upstream remote ==="
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
@@ -115,7 +128,7 @@ jobs:
               echo "=== Switching back to nightly-builds-with-bc ==="
               git checkout nightly-builds-with-bc
 
-              # Create PR using gh CLI
+              echo "=== Creating PR for conflict resolution ==="
               gh pr create \
                 --base nightly-builds-with-bc \
                 --head "$CONFLICT_BRANCH" \
@@ -135,6 +148,8 @@ jobs:
               echo "Continuing build with non-conflicting changes applied"
             fi
           fi
+
+          set +x  # Disable command echoing
 
       - name: Get date and version
         run: |
