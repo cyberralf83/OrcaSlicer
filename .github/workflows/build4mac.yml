@@ -76,42 +76,43 @@ jobs:
               git push origin nightly-builds-with-bc
               echo "Merge successful"
             else
-              # Conflicts detected
-              echo "Merge conflicts detected"
+              echo "=== Merge conflicts detected ==="
 
-              # Get list of conflicted files
+              echo "=== Getting list of conflicted files ==="
               CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
               echo "Conflicted files:"
               echo "$CONFLICTED_FILES"
 
-              # Accept all non-conflicting changes and keep conflicted files from our branch
+              echo "=== Resolving conflicts by keeping our versions ==="
               git diff --name-only --diff-filter=U | while read file; do
                 echo "Keeping our version of: $file"
                 git checkout --ours "$file"
                 git add "$file"
               done
 
-              # Commit the partial merge and get its SHA
+              echo "=== Committing partial merge ==="
               git commit -m "Partial merge of upstream nightly-builds (${UPSTREAM_SHA:0:8}) - conflicts pending"
               PARTIAL_MERGE_SHA=$(git rev-parse HEAD)
+              echo "Partial merge SHA: ${PARTIAL_MERGE_SHA}"
 
-              # Push the partial merge to nightly-builds-with-bc
+              echo "=== Pushing partial merge to nightly-builds-with-bc ==="
               git push origin nightly-builds-with-bc
 
-              # Create a new branch for the PR from the commit BEFORE the partial merge
+              echo "=== Creating conflict branch for PR ==="
               CONFLICT_BRANCH="merge-conflict-$(date +%Y%m%d-%H%M%S)"
+              echo "Conflict branch name: ${CONFLICT_BRANCH}"
               git checkout -b "$CONFLICT_BRANCH" HEAD~1
 
-              # Now attempt the merge again to show real conflicts
+              echo "=== Re-attempting merge to show conflicts ==="
               git merge ${UPSTREAM_SHA} --no-commit --no-ff || true
 
-              # Commit with conflict markers for PR
+              echo "=== Committing conflicts for PR ==="
               git commit -a -m "WIP: Merge conflicts from upstream nightly-builds (${UPSTREAM_SHA:0:8})"
 
-              # Push conflict branch
+              echo "=== Pushing conflict branch ==="
               git push origin "$CONFLICT_BRANCH"
 
-              # Switch back to nightly-builds-with-bc (which now has the partial merge)
+              echo "=== Switching back to nightly-builds-with-bc ==="
               git checkout nightly-builds-with-bc
 
               # Create PR using gh CLI
