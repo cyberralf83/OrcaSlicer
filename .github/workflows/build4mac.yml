@@ -21,6 +21,16 @@ jobs:
       ver_pure:
     
     steps:
+      - name: Validate PAT token secret
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "$PAT_TOKEN" ]; then
+            echo "::error::PAT_TOKEN secret is not set. Create a PAT with 'repo' and 'workflow' scopes and add it as PAT_TOKEN in repository secrets."
+            echo "Repository secrets: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+
       - name: Checkout nightly-builds-with-bc branch
         uses: actions/checkout@v5
         with:
