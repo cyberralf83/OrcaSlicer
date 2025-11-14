@@ -38,7 +38,6 @@ jobs:
           fetch-depth: 0
           lfs: 'true'
           token: ${{ secrets.PAT_TOKEN }}
-          persist-credentials: false
           
       - name: Fetch and merge upstream nightly-builds
         env:
@@ -56,17 +55,19 @@ jobs:
           echo "Current origin URL:"
           git remote get-url origin
 
-          # Set the new URL with PAT token embedded directly
-          git remote set-url origin "https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}"
+          # Remove the trailing .git if it exists in the repository name
+          REPO_URL="https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}"
+
+          # Set the new URL with PAT token (without .git extension to match checkout)
+          git remote set-url origin "${REPO_URL}"
 
           # Verify it was set (GitHub Actions will automatically sanitize the token in logs)
           echo "Updated origin URL (token will be hidden):"
           git remote get-url origin
 
-          # Show all git config related to credentials/auth for debugging
-          echo "Git credential config:"
-          git config --local --get-regexp 'credential.*' || echo "No credential config"
-          git config --local --get-regexp 'http.*' || echo "No http config"
+          # Configure git credential helper to use the token stored in memory
+          git config --local --unset-all credential.helper || true
+          git config --local credential.helper '!f() { echo "username=x-access-token"; echo "password=${PAT_TOKEN}"; }; f'
 
           echo "=== Adding upstream remote ==="
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
