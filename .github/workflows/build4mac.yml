@@ -40,6 +40,9 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           
       - name: Fetch and merge upstream nightly-builds
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -124,10 +127,7 @@ jobs:
               echo "Continuing build with non-conflicting changes applied"
             fi
           fi
-        env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-          
+
       - name: Get date and version
         run: |
           ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
