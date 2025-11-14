@@ -44,30 +44,35 @@ jobs:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
+          set -x  # Enable command echoing
+
+          echo "=== Configuring Git user ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Configure git to use the PAT for authentication
+          echo "=== Configuring Git remote with PAT ==="
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
 
-          # Add upstream remote if it doesn't exist
+          echo "=== Adding upstream remote ==="
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
 
-          # Fetch the nightly-builds tag from upstream
+          echo "=== Fetching upstream nightly-builds tag ==="
           git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
 
-          # Get the upstream SHA
+          echo "=== Getting upstream SHA ==="
           UPSTREAM_SHA=$(git rev-parse upstream-nightly)
           echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
 
-          # Check if we've already merged this commit
+          echo "=== Checking if already merged ==="
           if git merge-base --is-ancestor ${UPSTREAM_SHA} HEAD; then
             echo "Already up to date with upstream"
           else
-            # Try to merge upstream changes - don't auto-commit
+            echo "=== Attempting merge ==="
             if git merge ${UPSTREAM_SHA} --no-commit --no-ff; then
-              # Clean merge - commit and push
+              echo "=== Clean merge detected - committing ==="
               git commit -m "Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"
+
+              echo "=== Pushing to nightly-builds-with-bc ==="
               git push origin nightly-builds-with-bc
               echo "Merge successful"
             else
