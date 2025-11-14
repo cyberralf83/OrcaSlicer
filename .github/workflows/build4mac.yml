@@ -86,15 +86,18 @@ jobs:
                 git add "$file"
               done
 
-              # Commit the partial merge
+              # Commit the partial merge and get its SHA
               git commit -m "Partial merge of upstream nightly-builds (${UPSTREAM_SHA:0:8}) - conflicts pending"
+              PARTIAL_MERGE_SHA=$(git rev-parse HEAD)
 
-              # Create a new branch for the PR
+              # Push the partial merge to nightly-builds-with-bc
+              git push origin nightly-builds-with-bc
+
+              # Create a new branch for the PR from the commit BEFORE the partial merge
               CONFLICT_BRANCH="merge-conflict-$(date +%Y%m%d-%H%M%S)"
-              git checkout -b "$CONFLICT_BRANCH"
+              git checkout -b "$CONFLICT_BRANCH" HEAD~1
 
-              # Reset to before our partial merge to show real conflicts
-              git reset --hard HEAD~1
+              # Now attempt the merge again to show real conflicts
               git merge ${UPSTREAM_SHA} --no-commit --no-ff || true
 
               # Commit with conflict markers for PR
@@ -103,9 +106,8 @@ jobs:
               # Push conflict branch
               git push origin "$CONFLICT_BRANCH"
 
-              # Switch back to main branch with partial merge
+              # Switch back to nightly-builds-with-bc (which now has the partial merge)
               git checkout nightly-builds-with-bc
-              git push origin nightly-builds-with-bc
 
               # Create PR using gh CLI
               gh pr create \
@@ -254,7 +256,7 @@ jobs:
       - name: Upload profile validator DMG
         uses: actions/upload-artifact@v5
         with:
-          name: OrcaSlicer_profile_validator_Mac_arm64_DMG_${{ env.ver }}
+          name: OrcaSlicer_Mac_arm64_profile_validator_${{ env.ver }}
           path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
           if-no-files-found: ignore
 
