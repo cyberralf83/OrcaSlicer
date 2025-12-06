@@ -247,6 +247,11 @@ jobs:
           rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/*
           cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/
           ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/Applications
+
+          # Ensure all file operations are complete
+          sync
+          sleep 2
+
           hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
           codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
 
@@ -256,6 +261,11 @@ jobs:
             rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/*
             cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/
             ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/Applications
+
+            # Ensure all file operations are complete
+            sync
+            sleep 2
+
             hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
             codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
           fi
