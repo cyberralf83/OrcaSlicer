@@ -247,6 +247,11 @@ jobs:
           rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/*
           cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/
           ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/Applications
+
+          # Ensure all file operations are complete
+          sync
+          sleep 2
+
           hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
           codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
 
@@ -256,6 +261,11 @@ jobs:
             rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/*
             cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/
             ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/Applications
+
+            # Ensure all file operations are complete
+            sync
+            sleep 2
+
             hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
             codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
           fi
@@ -310,49 +320,43 @@ jobs:
         with:
           pattern: OrcaSlicer_Mac_arm64_*
           merge-multiple: true
+          path: ./artifacts
 
-      - name: Delete old release assets
+      - name: List downloaded artifacts
+        run: |
+          echo "Contents of artifacts directory:"
+          ls -la ./artifacts/
+          echo "Looking for DMG files:"
+          find ./artifacts -name "*.dmg" -type f
+
+      - name: Delete old release and create new one
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get the release ID for the nightly-mac-arm64 tag
-          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/nightly-mac-arm64 --jq '.id' 2>/dev/null || echo "")
-
-          if [ -n "$RELEASE_ID" ]; then
-            echo "Found release ID: $RELEASE_ID"
-            # Get all assets for this release and delete DMG files
-            gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq '.[].id' | while read ASSET_ID; do
-              ASSET_NAME=$(gh api repos/${{ github.repository }}/releases/assets/$ASSET_ID --jq '.name')
-              if [[ "$ASSET_NAME" == OrcaSlicer_Mac_arm64_*.dmg ]] || [[ "$ASSET_NAME" == OrcaSlicer_profile_validator_Mac_arm64_*.dmg ]]; then
-                echo "Deleting old asset: $ASSET_NAME (ID: $ASSET_ID)"
-                gh api -X DELETE repos/${{ github.repository }}/releases/assets/$ASSET_ID || true
-              fi
-            done
-          else
-            echo "Release not found or doesn't exist yet"
+          # Delete the existing release if it exists
+          echo "Checking for existing nightly-mac-arm64 release..."
+          if gh release view nightly-mac-arm64 2>/dev/null; then
+            echo "Deleting existing nightly-mac-arm64 release..."
+            gh release delete nightly-mac-arm64 --yes --cleanup-tag || true
           fi
 
-      - name: Create or update nightly release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly-mac-arm64
-          name: "Nightly Mac ARM64 Build"
-          body: |
-            Automated nightly build from nightly-builds-with-bc branch (synced with upstream)
-            
-            **Version:** ${{ steps.get_version.outputs.version }}
-            **Branch SHA:** ${{ steps.get_version.outputs.sha }}
-            
-            This build includes:
-            - Latest changes from upstream OrcaSlicer nightly-builds tag
-            - Custom modifications from nightly-builds-with-bc branch
-            
-            Built for macOS (ARM64 only - Apple Silicon).
+          # Create fresh release with DMG files
+          echo "Creating new nightly-mac-arm64 release..."
+          gh release create nightly-mac-arm64 \
+            --title "Nightly Mac ARM64 Build" \
+            --prerelease \
+            --latest \
+            --notes "Automated nightly build from nightly-builds-with-bc branch (synced with upstream)
 
-            **Note:** These builds are signed and notarized by Apple. You can install and run them directly without any security warnings.
-          files: |
-            OrcaSlicer_Mac_arm64_*.dmg
-          prerelease: true
-          draft: false
-          fail_on_unmatched_files: true
+          **Version:** ${{ steps.get_version.outputs.version }}
+          **Branch SHA:** ${{ steps.get_version.outputs.sha }}
+
+          This build includes:
+          - Latest changes from upstream OrcaSlicer nightly-builds tag
+          - Custom modifications from nightly-builds-with-bc branch
+
+          Built for macOS (ARM64 only - Apple Silicon).
+
+          **Note:** These builds are signed and notarized by Apple. You can install and run them directly without any security warnings." \
+            ./artifacts/*.dmg
 
