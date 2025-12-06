@@ -344,7 +344,6 @@ jobs:
           echo "Creating new nightly-mac-arm64 release..."
           gh release create nightly-mac-arm64 \
             --title "Nightly Mac ARM64 Build" \
-            --prerelease \
             --latest \
             --notes "Automated nightly build from nightly-builds-with-bc branch (synced with upstream)
 
