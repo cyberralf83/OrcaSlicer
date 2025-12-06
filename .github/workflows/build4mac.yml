@@ -344,6 +344,8 @@ jobs:
           echo "Creating new nightly-mac-arm64 release..."
           gh release create nightly-mac-arm64 \
             --title "Nightly Mac ARM64 Build" \
+            --prerelease \
+            --latest \
             --notes "Automated nightly build from nightly-builds-with-bc branch (synced with upstream)
 
           **Version:** ${{ steps.get_version.outputs.version }}
@@ -356,6 +358,5 @@ jobs:
           Built for macOS (ARM64 only - Apple Silicon).
 
           **Note:** These builds are signed and notarized by Apple. You can install and run them directly without any security warnings." \
-            --prerelease \
             ./artifacts/*.dmg
 
