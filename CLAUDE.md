@@ -4,231 +4,197 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio, built using C++ with wxWidgets for the GUI and CMake as the build system. The project uses a modular architecture with separate libraries for core slicing functionality, GUI components, and platform-specific code.
+OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Built with C++17, wxWidgets GUI, and CMake. The codebase is 500k+ lines across core slicing engine (`src/libslic3r/`), GUI (`src/slic3r/GUI/`), and bundled dependencies (`deps_src/`).
+
+## This Fork
+
+- Tracks upstream OrcaSlicer nightly builds, rebased every few days
+- The **only** custom code is a Bambu Connect export plugin
+- A custom GitHub Actions workflow rebuilds and publishes a new GitHub release on each upstream sync
+- **Do NOT make changes unrelated to the Bambu Connect plugin**
+- Keep the diff from upstream as minimal as possible
 
 ## Build Commands
 
-### Building on Windows
-**Always use this command to build the project when testing build issues on Windows.**
-```bash
-cmake --build . --config %build_type% --target ALL_BUILD -- -m
-```
-
-### Building on macOS
-**Always use this command to build the project when testing build issues on macOS.**
-```bash
-cmake --build build/arm64 --config RelWithDebInfo --target all --
-```
-
-### Building on Linux
- **Always use this command to build the project when testing build issues on Linux.**
-```bash
-cmake --build build/arm64 --config RelWithDebInfo --target all --
-
-```
-### Build test:
-
-**Always use this command to build the project when testing build issues on Windows.**
-```bash
-cmake --build . --config %build_type% --target ALL_BUILD -- -m
-```
-
-### Building on macOS
-**Always use this command to build the project when testing build issues on macOS.**
-```bash
-cmake --build build/arm64 --config RelWithDebInfo --target all --
-```
-
-### Building on Linux
- **Always use this command to build the project when testing build issues on Linux.**
-```bash
-cmake --build build/arm64 --config RelWithDebInfo --target all --
-
-```
-
-
 ### Build System
-- Uses CMake with minimum version 3.13 (maximum 3.31.x on Windows)
-- Primary build directory: `build/`
-- Dependencies are built in `deps/build/`
-- The build process is split into dependency building and main application building
-- Windows builds use Visual Studio generators
-- macOS builds use Xcode by default, Ninja with -x flag
-- Linux builds use Ninja generator
+
+Two-phase build: dependencies first (`deps/`), then main application. Dependencies are built once and cached.
+
+- CMake minimum 3.13
+- Windows: Visual Studio generator
+- macOS: Xcode by default, Ninja with `-x` flag
+- Linux: Ninja generator
+- Tests require `BUILD_TESTS=ON` CMake option
+
+### Building
+
+**Windows:**
+```bash
+cmake --build . --config %build_type% --target ALL_BUILD -- -m
+```
+
+**macOS:**
+```bash
+cmake --build build/arm64 --config RelWithDebInfo --target all --
+```
+
+**Linux:**
+```bash
+cmake --build build/arm64 --config RelWithDebInfo --target all --
+```
+
+Build scripts for CI/release are at the repo root: `build_linux.sh`, `build_release_macos.sh`, `build_release_vs2022.bat`. Use `build_release_macos.sh -sx` for macOS debugging. `scripts/DockerBuild.sh` for reproducible container builds.
 
 ### Testing
-Tests are located in the `tests/` directory and use the Catch2 testing framework. Test structure:
-- `tests/libslic3r/` - Core library tests (21 test files)
-  - Geometry processing, algorithms, file formats (STL, 3MF, AMF)
-  - Polygon operations, clipper utilities, Voronoi diagrams
-- `tests/fff_print/` - Fused Filament Fabrication tests (12 test files)
-  - Slicing algorithms, G-code generation, print mechanics
-  - Fill patterns, extrusion, support material
-- `tests/sla_print/` - Stereolithography tests (4 test files)
-  - SLA-specific printing algorithms, support generation
-- `tests/libnest2d/` - 2D nesting algorithm tests
-- `tests/slic3rutils/` - Utility function tests
-- `tests/sandboxes/` - Experimental/sandbox test code
 
-Run all tests after building:
-```bash
-cd build && ctest
-```
+Tests use Catch2 v2 (`#include <catch2/catch.hpp>`). Must be enabled with `BUILD_TESTS=ON`.
 
-Run tests with verbose output:
 ```bash
+# Run all tests
 cd build && ctest --output-on-failure
+
+# Run individual test suites directly
+./build/tests/libslic3r/libslic3r_tests --order rand --warn NoAssertions
+./build/tests/fff_print/fff_print_tests
+./build/tests/sla_print/sla_print_tests
+
+# Run via ctest with labels
+cd build && ctest --test-dir tests -L "Http|PlaceholderParser" --output-on-failure -j
 ```
 
-Run individual test suites:
-```bash
-# From build directory
-ctest --test-dir ./tests/libslic3r/libslic3r_tests
-ctest --test-dir ./tests/fff_print/fff_print_tests
-ctest --test-dir ./tests/sla_print/sla_print_tests
-# and so on
-```
+Test structure:
+- `tests/libslic3r/` - Core library tests (21 files): geometry, algorithms, file formats
+- `tests/fff_print/` - FFF print tests (16 files): slicing, G-code, fill patterns, supports
+- `tests/sla_print/` - SLA tests: support generation, slicing
+- `tests/libnest2d/` - 2D nesting algorithm tests
+- `tests/data/` - Test models and configs used by tests
 
 ## Architecture
 
-### Core Libraries
-- **libslic3r/**: Core slicing engine and algorithms (platform-independent)
-  - Main slicing logic, geometry processing, G-code generation
-  - Key classes: Print, PrintObject, Layer, GCode, Config
-  - Modular design with specialized subdirectories:
-    - `GCode/` - G-code generation, cooling, pressure equalization, thumbnails
-    - `Fill/` - Infill pattern implementations (gyroid, honeycomb, lightning, etc.)
-    - `Support/` - Tree supports and traditional support generation
-    - `Geometry/` - Advanced geometry operations, Voronoi diagrams, medial axis
-    - `Format/` - File I/O for 3MF, AMF, STL, OBJ, STEP formats
-    - `SLA/` - SLA-specific print processing and support generation
-    - `Arachne/` - Advanced wall generation using skeletal trapezoidation
+### Source Layout
 
-- **src/slic3r/**: Main application framework and GUI
-  - GUI application built with wxWidgets
-  - Integration between libslic3r core and user interface
-  - Located in `src/slic3r/GUI/` (not shown in this directory but exists)
+```
+src/
+├── OrcaSlicer.cpp              # Application entry point
+├── libslic3r/                  # Core slicing engine (platform-independent)
+│   ├── Print.cpp/hpp           # Slicing pipeline orchestrator
+│   ├── PrintConfig.cpp/hpp     # All print/printer/material settings (10k+ lines)
+│   ├── GCode/                  # G-code generation pipeline (45+ files)
+│   ├── Fill/                   # Infill patterns (30+ algorithms)
+│   ├── Support/                # Tree and traditional support generation
+│   ├── Arachne/                # Variable-width perimeter generation
+│   ├── Format/                 # File I/O: 3MF, STL, AMF, OBJ, STEP
+│   ├── Geometry/               # Geometric operations, Voronoi, medial axis
+│   ├── SLA/                    # Stereolithography processing
+│   └── Algorithm/              # Generic algorithm implementations
+├── slic3r/                     # Application framework
+│   ├── GUI/                    # wxWidgets GUI (~580 files)
+│   │   ├── GUI_App.cpp/hpp     # Application main class
+│   │   ├── MainFrame.cpp/hpp   # Primary window
+│   │   ├── Plater.cpp/hpp      # 3D model placement interface
+│   │   ├── Tab.cpp/hpp         # Settings panels (Print/Filament/Printer)
+│   │   ├── GLCanvas3D.cpp/hpp  # OpenGL 3D viewport
+│   │   ├── Gizmos/             # 3D manipulation tools
+│   │   ├── Jobs/               # Async job processing
+│   │   └── Widgets/            # Custom wxWidgets controls
+│   ├── Config/                 # Configuration management
+│   └── Utils/                  # Utility functions
+├── libvgcode/                  # G-code visualization engine
+└── deps_src/                   # Bundled dependency sources (clipper2, eigen, imgui, etc.)
+```
 
-### Key Algorithmic Components
-- **Arachne Wall Generation**: Variable-width perimeter generation using skeletal trapezoidation
-- **Tree Supports**: Organic support generation algorithm  
-- **Lightning Infill**: Sparse infill optimization for internal structures
-- **Adaptive Slicing**: Variable layer height based on geometry
-- **Multi-material**: Multi-extruder and soluble support processing
-- **G-code Post-processing**: Cooling, fan control, pressure advance, conflict checking
+### Slicing Pipeline
 
-### File Format Support
-- **3MF/BBS_3MF**: Native format with extensions for multi-material and metadata
-- **STL**: Standard tessellation language for 3D models
-- **AMF**: Additive Manufacturing Format with color/material support  
-- **OBJ**: Wavefront OBJ with material definitions
-- **STEP**: CAD format support for precise geometry
-- **G-code**: Output format with extensive post-processing capabilities
+The `Print` class orchestrates slicing via a state machine. Each step is tracked for caching/invalidation.
 
-### External Dependencies
-- **Clipper2**: Advanced 2D polygon clipping and offsetting
-- **libigl**: Computational geometry library for mesh operations
-- **TBB**: Intel Threading Building Blocks for parallelization
-- **wxWidgets**: Cross-platform GUI framework
-- **OpenGL**: 3D graphics rendering and visualization
-- **CGAL**: Computational Geometry Algorithms Library (selective use)
-- **OpenVDB**: Volumetric data structures for advanced operations
-- **Eigen**: Linear algebra library for mathematical operations
+**Per-object steps** (run in parallel via TBB):
+1. `posSlice` - Mesh slicing into layers
+2. `posPerimeters` - Wall generation (Arachne variable-width)
+3. `posPrepareInfill` - Infill region preparation
+4. `posInfill` - Fill pattern generation
+5. `posIroning` - Surface ironing
+6. `posSupportMaterial` - Support generation
+7. `posSimplifyPath/Wall/Infill` - Path optimization
 
-## File Organization
+**Print-level steps** (sequential):
+1. `psWipeTower` - Tool ordering and wipe tower
+2. `psSkirtBrim` - Skirt/brim generation
+3. `psGCodeExport` - G-code output
+4. `psConflictCheck` - Collision detection
 
-### Resources and Configuration
-- `resources/profiles/` - Printer and material profiles organized by manufacturer
-- `resources/printers/` - Printer-specific configurations and G-code templates  
-- `resources/images/` - UI icons, logos, calibration images
-- `resources/calib/` - Calibration test patterns and data
-- `resources/handy_models/` - Built-in test models (benchy, calibration cubes)
+### Configuration System
 
-### Internationalization and Localization  
-- `localization/i18n/` - Source translation files (.pot, .po)
-- `resources/i18n/` - Runtime language resources
-- Translation managed via `scripts/run_gettext.sh` / `scripts/run_gettext.bat`
+`PrintConfig.cpp/hpp` defines all settings using a hierarchical model:
+- `PrintObjectConfig` - Per-object settings
+- `PrintRegionConfig` - Per-region (volumes sharing same extruder) settings
+- `PrintConfig` - Overall print settings, inherits from above
+- `GCodeConfig` - G-code generation settings
+- `DynamicPrintConfig` - Runtime-flexible config used in GUI
+- `StaticPrintConfig` - Compile-time typed config used in slicing
 
-### Platform-Specific Code
-- `src/libslic3r/Platform.cpp` - Platform abstractions and utilities
-- `src/libslic3r/MacUtils.mm` - macOS-specific utilities (Objective-C++)
-- Windows-specific build scripts and configurations
-- Linux distribution support scripts in `scripts/linux.d/`
+Settings are registered with name, type, default value, bounds, label, and tooltip. Filament profiles can override per-extruder settings via `filament_extruder_override_keys`.
 
-### Build and Development Tools
-- `cmake/modules/` - Custom CMake find modules and utilities
-- `scripts/` - Python utilities for profile generation and validation  
-- `tools/` - Windows build tools (gettext utilities)
-- `deps/` - External dependency build configurations
+### G-Code Generation Pipeline
 
-## Development Workflow
+Key components in `src/libslic3r/GCode/`:
+- `GCodeProcessor` - Main engine (~258KB), parses and processes G-code
+- `CoolingBuffer` - Fan speed and travel time optimization
+- `AvoidCrossingPerimeters` - Safe travel path planning
+- `ToolOrdering` / `WipeTower` / `WipeTower2` - Multi-tool sequencing
+- `SeamPlacer` - Layer seam positioning
+- `PressureEqualizer` / `AdaptivePAProcessor` - Pressure advance
+- `FanMover` - Dynamic fan speed ramping
+- `ConflictChecker` - Nozzle/build volume collision detection
 
-### Code Style and Standards
-- **C++17 standard** with selective C++20 features
-- **Naming conventions**: PascalCase for classes, snake_case for functions/variables
-- **Header guards**: Use `#pragma once` 
-- **Memory management**: Prefer smart pointers, RAII patterns
-- **Thread safety**: Use TBB for parallelization, be mindful of shared state
+### Profile System
 
-### Common Development Tasks
+Profiles in `resources/profiles/` organized by manufacturer (64+ vendors):
+```
+resources/profiles/
+├── BBL.json                    # Vendor manifest with machine/process/filament lists
+├── [Manufacturer]/
+│   ├── machine/                # Printer definitions
+│   ├── process/                # Print profiles (speed, quality settings)
+│   └── filament/               # Material definitions
+```
 
-#### Adding New Print Settings
-1. Define setting in `PrintConfig.cpp` with proper bounds and defaults
-2. Add UI controls in appropriate GUI components  
-3. Update serialization in config save/load
-4. Add tooltips and help text for user guidance
-5. Test with different printer profiles
+Profiles use JSON with an inheritance system (`"inherits": "base_profile_name"`). The top-level vendor JSON (e.g., `BBL.json`) is a manifest referencing individual profile files via `sub_path`.
 
-#### Modifying Slicing Algorithms  
-1. Core algorithms live in `libslic3r/` subdirectories
-2. Performance-critical code should be profiled and optimized
-3. Consider multi-threading implications (TBB integration)
-4. Validate changes don't break existing profiles
-5. Add regression tests where appropriate
+### GUI Structure
 
-#### GUI Development
-1. GUI code resides in `src/slic3r/GUI/` (not visible in current tree)
-2. Use existing wxWidgets patterns and custom controls
-3. Support both light and dark themes
-4. Consider DPI scaling on high-resolution displays
-5. Maintain cross-platform compatibility
+The GUI uses wxWidgets with OpenGL for 3D rendering:
+- `GUI_App` - Application lifecycle and initialization
+- `MainFrame` - Window management, menu bar, status bar
+- `Plater` - Central workspace: model loading, arrangement, plate management
+- `Tab` / `Page` / `ConfigOptionsGroup` - Dynamic settings UI generated from config definitions
+- `GLCanvas3D` - 3D viewport with camera, selection, gizmos
+- `GCodeViewer` - G-code visualization and analysis (uses `libvgcode/`)
 
-#### Adding Printer Support
-1. Create JSON profile in `resources/profiles/[manufacturer].json`
-2. Add printer-specific start/end G-code templates
-3. Configure build volume, capabilities, and material compatibility
-4. Test thoroughly with actual hardware when possible
-5. Follow existing profile structure and naming conventions
+### Key Dependencies
 
-### Dependencies and Build System
-- **CMake-based** with separate dependency building phase
-- **Dependencies** built once in `deps/build/`, then linked to main application  
-- **Cross-platform** considerations important for all changes
-- **Resource files** embedded at build time, platform-specific handling
+Built externally (`deps/`): Boost 1.83+, TBB, wxWidgets, OpenSSL, CURL, CGAL, OpenVDB 5.0+, NLopt 1.4+, Eigen 3.3+
 
-### Performance Considerations
-- **Slicing algorithms** are CPU-intensive, profile before optimizing
-- **Memory usage** can be substantial with complex models
-- **Multi-threading** extensively used via TBB
-- **File I/O** optimized for large 3MF files with embedded textures
-- **Real-time preview** requires efficient mesh processing
+Bundled (`deps_src/`): clipper2, libigl, imgui, libnest2d, admesh, cereal, eigen, expat
 
-## Important Development Notes
+## Code Conventions
 
-### Codebase Navigation
-- Use search tools extensively - codebase has 500k+ lines
-- Key entry points: `src/OrcaSlicer.cpp` for application startup
-- Core slicing: `libslic3r/Print.cpp` orchestrates the slicing pipeline
-- Configuration: `PrintConfig.cpp` defines all print/printer/material settings
+- C++17, PascalCase for classes, snake_case for functions/variables, SCREAMING_CASE for constants
+- `#pragma once` for header guards
+- `.clang-format` enforces 4-space indents, 140-column limit, brace wrapping for classes/functions. Run `clang-format -i <file>` before committing.
+- Parallelization via TBB (not raw threads)
+- Translation macros: `L()`, `_L()`, `_u8L()` for translatable strings
+- Translations in `localization/i18n/` (.po files), compiled to `resources/i18n/` (.mo files)
+- Generate translations: `scripts/run_gettext.sh`
+- Commit style: concise sentence-style subjects with optional issue refs, e.g. `Fix grid lines origin for multiple plates (#10724)`
+- Do not modify vendored code in `deps/` or `deps_src/` without mirroring upstream tags
 
-### Compatibility and Stability
-- **Backward compatibility** maintained for project files and profiles
-- **Cross-platform** support essential (Windows/macOS/Linux)  
-- **File format** changes require careful version handling
-- **Profile migrations** needed when settings change significantly
+## Key CMake Options
 
-### Quality and Testing
-- **Regression testing** important due to algorithm complexity
-- **Performance benchmarks** help catch performance regressions
-- **Memory leak** detection important for long-running GUI application
-- **Cross-platform** testing required before releases
+| Option | Default | Description |
+|--------|---------|-------------|
+| `BUILD_TESTS` | OFF | Build unit tests |
+| `SLIC3R_GUI` | ON | Build GUI components |
+| `SLIC3R_STATIC` | ON | Static linking |
+| `SLIC3R_PCH` | ON | Precompiled headers |
+| `SLIC3R_ASAN` | OFF | AddressSanitizer |
+| `SLIC3R_BUILD_SANDBOXES` | OFF | Development sandboxes |
