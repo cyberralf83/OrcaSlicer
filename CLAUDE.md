@@ -12,6 +12,8 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
 - The **only** custom code is a Bambu Connect export plugin and the CI workflow to build it
 - **Do NOT make changes unrelated to the Bambu Connect plugin**
 - Keep the diff from upstream as minimal as possible
+- **GitHub fork:** `cyberralf83/OrcaSlicer`, branch `nightly-builds-with-bc`
+- Always use `-R cyberralf83/OrcaSlicer` with `gh` CLI commands (workflows, issues, PRs, etc.)
 
 ### Bambu Connect Plugin
 
