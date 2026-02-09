@@ -8,11 +8,28 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
 
 ## This Fork
 
-- Tracks upstream OrcaSlicer nightly builds, rebased every few days
-- The **only** custom code is a Bambu Connect export plugin
-- A custom GitHub Actions workflow rebuilds and publishes a new GitHub release on each upstream sync
+- Tracks upstream OrcaSlicer (`SoftFever/OrcaSlicer`) nightly builds, merged every few days
+- The **only** custom code is a Bambu Connect export plugin and the CI workflow to build it
 - **Do NOT make changes unrelated to the Bambu Connect plugin**
 - Keep the diff from upstream as minimal as possible
+
+### Bambu Connect Plugin
+
+Adds a "Send to BC" button for BBL printers that exports the sliced file and opens it in Bambu Connect via the `bambu-connect://` URL scheme. The custom code touches these files (relative to upstream):
+
+- `src/slic3r/GUI/GLToolbar.cpp/hpp` - Declares/defines `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT` event
+- `src/slic3r/GUI/MainFrame.cpp/hpp` - Adds `eSendBambuConnect = 10` to `PrintSelectType` enum, "Send to BC" button label, dropdown menu entry, enable/disable logic, and event dispatch
+- `src/slic3r/GUI/Plater.cpp` - Implements `on_action_send_bamcu_conect()` handler: calls `send_gcode()`, gets the 3MF path, URL-encodes parameters, and launches `bambu-connect://import-file?path=...&name=...&version=1.0.0` via `wxLaunchDefaultBrowser`. Also sets default print button to `eSendBambuConnect` for BBL printers.
+
+Flow: Slice -> "Send to BC" button -> export 3MF -> URL-encode path/name -> open `bambu-connect://` URL scheme
+
+### CI Workflow
+
+`.github/workflows/build4mac.yml` - Custom workflow that:
+- Runs on schedule (every 4 days) or manual trigger
+- Fetches and merges upstream `nightly-builds` tag into `nightly-builds-with-bc` branch
+- Builds macOS ARM64 using `build_release_macos.sh`
+- Creates a DMG and publishes a GitHub release with the `nightly-mac-arm64` tag
 
 ## Build Commands
 
