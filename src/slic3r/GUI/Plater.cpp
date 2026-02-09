@@ -9839,7 +9839,20 @@ void Plater::priv::on_action_send_bamcu_conect(SimpleEvent&)
     }
 
     wxString filename = q->get_export_gcode_filename("", true, partplate_list.get_curr_plate_index() == PLATE_ALL_IDX ? true : false);
-    wxString filepath = wxString::FromUTF8(data._3mf_path.string());
+
+    // Copy to ~/Downloads/Bambuconnectfiles so Bambu Connect can access it (App Sandbox restriction)
+    fs::path downloads_dir(wxStandardPaths::Get().GetUserDir(wxStandardPaths::Dir_Downloads).utf8_str().data());
+    downloads_dir /= "Bambuconnectfiles";
+    if (!fs::exists(downloads_dir))
+        fs::create_directories(downloads_dir);
+    fs::path dest_path = downloads_dir / filename.utf8_string();
+    try {
+        fs::copy_file(data._3mf_path, dest_path, fs::copy_options::overwrite_existing);
+    } catch (const fs::filesystem_error& e) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to copy 3mf to Downloads: " << e.what();
+        return;
+    }
+    wxString filepath = wxString::FromUTF8(dest_path.string());
 
     // URL encode each parameter individually
     std::string encoded_path = Http::url_encode(filepath.ToStdString());
