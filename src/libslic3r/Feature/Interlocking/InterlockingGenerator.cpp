@@ -35,6 +35,8 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
     const int      interface_depth    = config.interlocking_depth;
     const int      boundary_avoidance = config.interlocking_boundary_avoidance;
     const coord_t  beam_width         = scaled(config.interlocking_beam_width.value);
+    const bool     bidirectional      = config.interlocking_beam_bidirectional;
+    const int      skip_layers        = config.interlocking_beam_skip_layers;
 
     const DilationKernel interface_dilation(GridPoint3(interface_depth, interface_depth, interface_depth), DilationKernel::Type::PRISM);
 
@@ -56,10 +58,24 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
             }
 
             InterlockingGenerator gen(*print_object, region_a_index, region_b_index, beam_width, boundary_avoidance, rotation, cell_size, beam_layer_count,
-                                      interface_dilation, air_dilation, air_filtering);
+                                      interface_dilation, air_dilation, air_filtering, bidirectional, skip_layers);
             gen.generateInterlockingStructure();
         }
     }
+}
+
+bool InterlockingGenerator::isActiveBeamLayer(size_t beam_layer_idx) const
+{
+    if (skip_layers <= 0)
+        return true;
+
+    // One cycle = 2 beam-layer groups (type 0 + type 1) + skip groups
+    // skip_groups = ceil(skip_layers / beam_layer_count)
+    size_t skip_groups  = (static_cast<size_t>(skip_layers) + static_cast<size_t>(beam_layer_count) - 1)
+                          / static_cast<size_t>(beam_layer_count);
+    size_t cycle_length = 2 + skip_groups;
+    size_t position     = beam_layer_idx % cycle_length;
+    return position < 2;
 }
 
 std::pair<ExPolygons, ExPolygons> InterlockingGenerator::growBorderAreasPerpendicular(const ExPolygons& a, const ExPolygons& b, const coord_t& detect) const
@@ -292,8 +308,17 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
         for (size_t mesh_idx = 0; mesh_idx < 2; mesh_idx++) {
             for (size_t layer_nr = bottom_corner.z(); layer_nr < bottom_corner.z() + cell_size.z() && layer_nr < max_layer_count;
                  layer_nr += beam_layer_count) {
-                ExPolygons areas_here = cell_area_per_mesh_per_layer[static_cast<size_t>(layer_nr / beam_layer_count) %
-                                                                cell_area_per_mesh_per_layer.size()][mesh_idx];
+                size_t beam_layer_idx = static_cast<size_t>(layer_nr / beam_layer_count);
+                if (!isActiveBeamLayer(beam_layer_idx))
+                    continue;
+
+                size_t layer_type = beam_layer_idx % cell_area_per_mesh_per_layer.size();
+
+                // Skip perpendicular layers in unidirectional mode
+                if (!bidirectional && layer_type == 1)
+                    continue;
+
+                ExPolygons areas_here = cell_area_per_mesh_per_layer[layer_type][mesh_idx];
                 for (auto & here : areas_here) {
                     here.translate(bottom_corner.x(), bottom_corner.y());
                 }
@@ -313,6 +338,13 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
     for (size_t region_idx = 0; region_idx < 2; region_idx++) {
         const size_t region = (region_idx == 0) ? region_a_index : region_b_index;
         for (size_t layer_nr = 0; layer_nr < max_layer_count; layer_nr++) {
+            size_t beam_layer_idx = layer_nr / static_cast<size_t>(beam_layer_count);
+            if (!isActiveBeamLayer(beam_layer_idx))
+                continue;
+            // Skip perpendicular layers in unidirectional mode
+            if (!bidirectional && (beam_layer_idx % 2) == 1)
+                continue;
+
             ExPolygons layer_outlines = layer_regions[layer_nr];
             expolygons_rotate(layer_outlines, unapply_rotation);
 

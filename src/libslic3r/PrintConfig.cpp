@@ -3953,6 +3953,24 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionInt(2));
 
+    def           = this->add("interlocking_beam_bidirectional", coBool);
+    def->label    = L("Bidirectional beams");
+    def->tooltip  = L("When enabled, interlocking beams alternate between two perpendicular directions. "
+                       "When disabled, beams are generated in only one direction (the interlocking orientation angle). "
+                       "The alternating layers will have normal walls with no interlocking.");
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def           = this->add("interlocking_beam_skip_layers", coInt);
+    def->label    = L("Skip layers between cycles");
+    def->tooltip  = L("Number of normal layers (without interlocking) to insert between each interlocking cycle. "
+                       "Set to 0 for no gaps between cycles (default behavior).");
+    def->min      = 0;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     // ORCA: special flag for flow rate calibration
     def           = this->add("calib_flowrate_topinfill_special_order", coBool);
     def->mode     = comDevelop;

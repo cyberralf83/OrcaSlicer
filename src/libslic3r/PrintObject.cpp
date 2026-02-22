@@ -1087,7 +1087,9 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "interlocking_beam_layer_count"
             || opt_key == "interlocking_depth"
             || opt_key == "interlocking_boundary_avoidance"
-            || opt_key == "interlocking_beam_width") {
+            || opt_key == "interlocking_beam_width"
+            || opt_key == "interlocking_beam_bidirectional"
+            || opt_key == "interlocking_beam_skip_layers") {
             steps.emplace_back(posSlice);
 		} else if (
                opt_key == "elefant_foot_compensation"

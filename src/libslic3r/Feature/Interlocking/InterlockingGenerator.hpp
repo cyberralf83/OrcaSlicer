@@ -75,7 +75,9 @@ private:
                           const coord_t         beam_layer_count,
                           const DilationKernel& interface_dilation,
                           const DilationKernel& air_dilation,
-                          const bool            air_filtering)
+                          const bool            air_filtering,
+                          const bool            bidirectional,
+                          const int             skip_layers)
         : print_object(print_object)
         , region_a_index(region_a_index)
         , region_b_index(region_b_index)
@@ -88,7 +90,11 @@ private:
         , interface_dilation(interface_dilation)
         , air_dilation(air_dilation)
         , air_filtering(air_filtering)
+        , bidirectional(bidirectional)
+        , skip_layers(skip_layers)
     {}
+
+    bool isActiveBeamLayer(size_t beam_layer_idx) const;
     
     /*! Given two polygons, return the parts that border on air, and grow 'perpendicular' up to 'detect' distance.
      *
@@ -165,6 +171,10 @@ private:
     // Whether to fully remove all of the interlocking cells which would be visible on the outside. If no air filtering then those cells
     // will be cut off midway in a beam.
     const bool air_filtering;
+    // Whether to generate beams in both perpendicular directions (true) or only the primary direction (false).
+    const bool bidirectional;
+    // Number of normal layers (without interlocking) to insert between each interlocking cycle.
+    const int skip_layers;
 };
 
 } // namespace Slic3r
