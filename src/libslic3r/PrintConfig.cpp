@@ -3946,8 +3946,18 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionInt(2));
 
     def           = this->add("interlocking_boundary_avoidance", coInt);
-    def->label    = L("Interlocking boundary avoidance");
-    def->tooltip  = L("The distance from the outside of a model where interlocking structures will not be generated, measured in cells.");
+    def->label    = L("Interlocking boundary avoidance (XY)");
+    def->tooltip  = L("The distance from the side walls of a model where interlocking structures will not be generated, measured in cells.");
+    def->min      = 0;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(2));
+
+    def           = this->add("interlocking_boundary_avoidance_z", coInt);
+    def->label    = L("Interlocking boundary avoidance (Z)");
+    def->tooltip  = L("The distance from the top and bottom surfaces of a model where interlocking structures "
+                       "will not be generated, measured in cells. Controls vertical (Z-axis) avoidance independently "
+                       "from the horizontal (XY) boundary avoidance.");
     def->min      = 0;
     def->category = L("Advanced");
     def->mode     = comAdvanced;

@@ -33,15 +33,22 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
     const float    rotation           = Geometry::deg2rad(config.interlocking_orientation.value);
     const coord_t  beam_layer_count   = config.interlocking_beam_layer_count;
     const int      interface_depth    = config.interlocking_depth;
-    const int      boundary_avoidance = config.interlocking_boundary_avoidance;
-    const coord_t  beam_width         = scaled(config.interlocking_beam_width.value);
-    const bool     bidirectional      = config.interlocking_beam_bidirectional;
-    const int      skip_layers        = config.interlocking_beam_skip_layers;
+    const int      boundary_avoidance   = config.interlocking_boundary_avoidance;
+    const int      boundary_avoidance_z = config.interlocking_boundary_avoidance_z;
+    const coord_t  beam_width           = scaled(config.interlocking_beam_width.value);
+    const bool     bidirectional        = config.interlocking_beam_bidirectional;
+    const int      skip_layers          = config.interlocking_beam_skip_layers;
 
     const DilationKernel interface_dilation(GridPoint3(interface_depth, interface_depth, interface_depth), DilationKernel::Type::PRISM);
 
-    const bool           air_filtering = boundary_avoidance > 0;
-    const DilationKernel air_dilation(GridPoint3(boundary_avoidance, boundary_avoidance, boundary_avoidance), DilationKernel::Type::PRISM);
+    const bool           air_filtering = boundary_avoidance > 0 || boundary_avoidance_z > 0;
+    // Kernel dimensions must be >= 1 when air filtering is active, otherwise a zero
+    // dimension produces an empty kernel (zero loop iterations). Use 1 as the minimum
+    // so that axis effectively has no avoidance rather than disabling the entire kernel.
+    const DilationKernel air_dilation(GridPoint3(std::max(boundary_avoidance, 1),
+                                                 std::max(boundary_avoidance, 1),
+                                                 std::max(boundary_avoidance_z, 1)),
+                                      DilationKernel::Type::PRISM);
 
     const coord_t cell_width = beam_width + beam_width;
     const Vec3crd cell_size(cell_width, cell_width, 2 * beam_layer_count);
