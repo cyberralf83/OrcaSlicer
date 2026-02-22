@@ -32,7 +32,7 @@ The pattern is built in 5 zones:
 
 When the row is too short for a middle section (`count <= 2*(M+G)`), there is no middle fill — just left end, merged gaps, right end. When the row is very short (`count <= 2*M`), the ends overlap and all cells are beams.
 
-Maximum consecutive beams is always capped at M (never exceeded).
+For rows longer than 2*M, maximum consecutive beams is capped at M. For short rows (`count <= 2*M`), ends overlap and all cells are kept — up to 2*M consecutive beams.
 
 ### M=4, G=4
 
@@ -56,7 +56,7 @@ Maximum consecutive beams is always capped at M (never exceeded).
 |-------|---------|-------|-------|
 | 20 | `BB....BB....BB....BB` | 8 | 2 middle groups, perfect fit |
 | 16 | `BB....BB......BB` | 6 | 1 middle group, gap merges (6 total gap) |
-| 14 | `BB....BB....BB` | 6 | No middle, gaps merge |
+| 14 | `BB....BB....BB` | 6 | 1 middle group, perfect fit |
 
 ### M=1, G=2
 
@@ -82,7 +82,7 @@ Maximum consecutive beams is always capped at M (never exceeded).
 | `src/libslic3r/PrintConfig.cpp` | Define both settings |
 | `src/libslic3r/PrintConfig.hpp` | Declare `ConfigOptionInt` for both |
 | `src/libslic3r/Feature/Interlocking/InterlockingGenerator.hpp` | Add constructor params, members (`beam_group_count`, `beam_gap`) + `filterCellsForAxis()` declaration. Add `#include <algorithm>` for `std::min` |
-| `src/libslic3r/Feature/Interlocking/InterlockingGenerator.cpp` | Read settings in `generate_interlocking_structure()`, pass to constructor, compute per-axis filtered sets, check inside inner loop |
+| `src/libslic3r/Feature/Interlocking/InterlockingGenerator.cpp` | Read settings in `generate_interlocking_structure()`, pass to constructor, compute per-axis filtered sets, check inside inner loop. Add `#include <set>` and `#include <map>` for `filterCellsForAxis()` |
 | `src/slic3r/GUI/Tab.cpp` | Add both UI lines |
 | `src/libslic3r/Preset.cpp` | Add both to preset key list |
 | `src/libslic3r/PrintObject.cpp` | Add both to invalidation |
@@ -154,21 +154,17 @@ Takes an `axis` parameter: 0 = filter X-rows (for even beam layers), 1 = filter 
 std::unordered_set<GridPoint3> InterlockingGenerator::filterCellsForAxis(
     const std::unordered_set<GridPoint3>& cells, int axis) const
 {
-    if (beam_group_count <= 0 || beam_gap <= 0)
-        return cells; // disabled — need both M>0 and G>0
-
-    // Helper: filter a sorted row of positions.
+    // Helper: apply 5-zone pattern to a single contiguous segment of positions.
     // Algorithm: M beams at left end, G gap, middle fill (M beams + G gap repeating L→R,
     // last group truncated), G gap, M beams at right end.
-    // Max consecutive beams is always capped at M.
-    auto filterRow = [this](std::vector<coord_t>& positions) -> std::set<coord_t> {
+    // For segments longer than 2*M, max consecutive beams is capped at M.
+    auto filterSegment = [this](const std::vector<coord_t>& positions) -> std::set<coord_t> {
         std::set<coord_t> keep;
-        std::sort(positions.begin(), positions.end());
         int count = (int)positions.size();
         int M = beam_group_count;
         int G = beam_gap;
 
-        // Short row: ends overlap, keep all
+        // Short segment: ends overlap, keep all
         if (count <= 2 * M) {
             for (auto& p : positions) keep.insert(p);
             return keep;
@@ -193,6 +189,33 @@ std::unordered_set<GridPoint3> InterlockingGenerator::filterCellsForAxis(
                     keep.insert(positions[i]);
             }
         }
+
+        return keep;
+    };
+
+    // Helper: split a sorted row of positions into contiguous segments
+    // (where consecutive grid coordinates differ by exactly 1), then apply
+    // the 5-zone pattern independently to each segment.
+    // This ensures both sides of any gap get anchored beam ends.
+    auto filterRow = [&filterSegment](std::vector<coord_t>& positions) -> std::set<coord_t> {
+        std::set<coord_t> keep;
+        std::sort(positions.begin(), positions.end());
+
+        // Split into contiguous segments
+        std::vector<coord_t> segment;
+        segment.push_back(positions[0]);
+        for (size_t i = 1; i < positions.size(); i++) {
+            if (positions[i] != positions[i - 1] + 1) {
+                // Gap detected — filter the current segment and start a new one
+                auto seg_keep = filterSegment(segment);
+                keep.insert(seg_keep.begin(), seg_keep.end());
+                segment.clear();
+            }
+            segment.push_back(positions[i]);
+        }
+        // Filter the last segment
+        auto seg_keep = filterSegment(segment);
+        keep.insert(seg_keep.begin(), seg_keep.end());
 
         return keep;
     };
@@ -232,9 +255,15 @@ std::unordered_set<GridPoint3> InterlockingGenerator::filterCellsForAxis(
 In `applyMicrostructureToOutlines()`, compute both filtered sets before the loop, then check inside the inner loop:
 
 ```cpp
-// Compute filtered cell sets per beam direction
-const auto filtered_type0 = filterCellsForAxis(cells, 0); // X-rows, for even beam layers
-const auto filtered_type1 = filterCellsForAxis(cells, 1); // Y-rows, for odd beam layers
+// Compute filtered cell sets per beam direction (only when enabled — avoids copying)
+const bool density_enabled = beam_group_count > 0 && beam_gap > 0;
+std::unordered_set<GridPoint3> filtered_type0_storage, filtered_type1_storage;
+if (density_enabled) {
+    filtered_type0_storage = filterCellsForAxis(cells, 0); // X-rows, for even beam layers
+    filtered_type1_storage = filterCellsForAxis(cells, 1); // Y-rows, for odd beam layers
+}
+const auto& filtered_type0 = density_enabled ? filtered_type0_storage : cells;
+const auto& filtered_type1 = density_enabled ? filtered_type1_storage : cells;
 
 // Outer loop still iterates ALL cells — filtering is per layer type inside
 for (const GridPoint3& grid_loc : cells) {
@@ -255,12 +284,10 @@ for (const GridPoint3& grid_loc : cells) {
                 continue;
 
             // Density filter: check against the filtered set for this layer type
-            if (beam_group_count > 0 && beam_gap > 0) {
-                if (layer_type == 0 && !filtered_type0.count(grid_loc))
-                    continue;
-                if (layer_type == 1 && !filtered_type1.count(grid_loc))
-                    continue;
-            }
+            if (layer_type == 0 && !filtered_type0.count(grid_loc))
+                continue;
+            if (layer_type == 1 && !filtered_type1.count(grid_loc))
+                continue;
 
             ExPolygons areas_here = cell_area_per_mesh_per_layer[layer_type][mesh_idx];
             // ... rest unchanged (translate, append to structure_per_layer)
@@ -271,15 +298,17 @@ for (const GridPoint3& grid_loc : cells) {
 
 ### Key implementation notes
 
-- **5-zone pattern**: left end (M beams) → left gap (G) → middle fill (M+G repeating L→R, last group truncated) → right gap (G) → right end (M beams). Max consecutive never exceeds M. Gap merging between middle fill and right gap is expected and harmless.
+- **5-zone pattern**: left end (M beams) → left gap (G) → middle fill (M+G repeating L→R, last group truncated) → right gap (G) → right end (M beams). For segments longer than 2*M, max consecutive is capped at M. For short segments, all cells are kept (up to 2*M consecutive). Gap merging between middle fill and right gap is expected and harmless.
+- **Row splitting at gaps**: Before applying the 5-zone pattern, each row is split into contiguous segments (consecutive grid coordinates differ by exactly 1). Each segment gets its own anchored ends. This ensures that gaps created by air filtering or irregular geometry don't leave inner edges unanchored.
 - Filtering is **per beam-layer type**, not per cell — each axis is filtered independently and applied only to its matching layer type
 - No polygon measurement or clipping needed — filtering operates on grid coordinates before beam polygons are generated
 - Short segments (`count <= 2*M`): ends overlap, all cells kept
 - Medium segments (`count <= 2*(M+G)`): no middle fill, just ends + merged gaps
 - Works correctly with Feature 1 (bidirectional toggle) — when `bidirectional == false`, `layer_type == 1` is skipped entirely, so `filtered_type1` is computed but never checked (negligible cost)
-- Zero overhead when disabled — both `beam_group_count` and `beam_gap` must be > 0; `filterCellsForAxis` returns the input set immediately otherwise
+- **Zero overhead when disabled** — both `beam_group_count` and `beam_gap` must be > 0. When disabled, `filterCellsForAxis` is not called; the call site uses `const` references to the original `cells` set directly (no copy)
 - Settings follow the same constructor-member pattern as `bidirectional` and `skip_layers` (read in `generate_interlocking_structure()`, passed to constructor, stored as `const` members)
 - The outer loop iterates all original `cells` — this is intentional. A cell may be filtered out for type 0 beams but kept for type 1 beams (or vice versa)
+- **Required includes**: Add `#include <set>` and `#include <map>` to `InterlockingGenerator.cpp` for `filterCellsForAxis()`
 
 ## Original Instructions
 
