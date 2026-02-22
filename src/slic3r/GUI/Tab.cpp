@@ -2625,6 +2625,8 @@ void TabPrint::build()
         optgroup->append_single_option_line("interlocking_boundary_avoidance_z");
         optgroup->append_single_option_line("interlocking_beam_bidirectional");
         optgroup->append_single_option_line("interlocking_beam_skip_layers");
+        optgroup->append_single_option_line("interlocking_beam_group_count");
+        optgroup->append_single_option_line("interlocking_beam_gap");
 
     page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Skirt"), L"param_skirt");

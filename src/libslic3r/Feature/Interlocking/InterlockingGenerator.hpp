@@ -77,7 +77,9 @@ private:
                           const DilationKernel& air_dilation,
                           const bool            air_filtering,
                           const bool            bidirectional,
-                          const int             skip_layers)
+                          const int             skip_layers,
+                          const int             beam_group_count,
+                          const int             beam_gap)
         : print_object(print_object)
         , region_a_index(region_a_index)
         , region_b_index(region_b_index)
@@ -92,6 +94,8 @@ private:
         , air_filtering(air_filtering)
         , bidirectional(bidirectional)
         , skip_layers(skip_layers)
+        , beam_group_count(beam_group_count)
+        , beam_gap(beam_gap)
     {}
 
     bool isActiveBeamLayer(size_t beam_layer_idx) const;
@@ -153,6 +157,15 @@ private:
      */
     void applyMicrostructureToOutlines(const std::unordered_set<GridPoint3>& cells, const std::vector<ExPolygons>& layer_regions) const;
 
+    /*!
+     * Filter cells for one beam axis using the 5-zone density pattern.
+     * Splits rows into contiguous segments and applies the pattern independently to each.
+     * \param cells The full set of cells to filter
+     * \param axis 0 = filter X-rows (for even beam layers), 1 = filter Y-rows (for odd beam layers)
+     * \return The filtered subset of cells
+     */
+    std::unordered_set<GridPoint3> filterCellsForAxis(const std::unordered_set<GridPoint3>& cells, int axis) const;
+
     static const coord_t ignored_gap_ = 100u; //!< Distance between models to be considered next to each other so that an interlocking structure will be generated there
 
     PrintObject&  print_object;
@@ -175,6 +188,10 @@ private:
     const bool bidirectional;
     // Number of normal layers (without interlocking) to insert between each interlocking cycle.
     const int skip_layers;
+    // Number of consecutive beams per group for density control. 0 = disabled (unlimited).
+    const int beam_group_count;
+    // Number of empty cells between beam groups for density control. 0 = disabled. Max 100.
+    const int beam_gap;
 };
 
 } // namespace Slic3r

@@ -19,6 +19,7 @@ This feature adds two settings to control beam density: group size (M — how ma
 - **Default**: `0` (disabled — no gaps between groups)
 - **Label**: "Beam gap"
 - **Tooltip**: "Number of empty cells between beam groups. Set to 0 for no gaps (all beams placed). Both this and beam group count must be greater than 0 to enable density control."
+- **Max**: `100` (clamped in config definition)
 
 ## Example
 
@@ -260,7 +261,8 @@ const bool density_enabled = beam_group_count > 0 && beam_gap > 0;
 std::unordered_set<GridPoint3> filtered_type0_storage, filtered_type1_storage;
 if (density_enabled) {
     filtered_type0_storage = filterCellsForAxis(cells, 0); // X-rows, for even beam layers
-    filtered_type1_storage = filterCellsForAxis(cells, 1); // Y-rows, for odd beam layers
+    if (bidirectional)
+        filtered_type1_storage = filterCellsForAxis(cells, 1); // Y-rows, only needed in bidirectional mode
 }
 const auto& filtered_type0 = density_enabled ? filtered_type0_storage : cells;
 const auto& filtered_type1 = density_enabled ? filtered_type1_storage : cells;

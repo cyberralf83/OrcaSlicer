@@ -5,6 +5,10 @@
 #include "libslic3r/ClipperUtils.hpp"
 #include "Layer.hpp"
 
+#include <algorithm>
+#include <map>
+#include <set>
+
 namespace std {
 template<> struct hash<Slic3r::GridPoint3>
 {
@@ -38,6 +42,8 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
     const coord_t  beam_width           = scaled(config.interlocking_beam_width.value);
     const bool     bidirectional        = config.interlocking_beam_bidirectional;
     const int      skip_layers          = config.interlocking_beam_skip_layers;
+    const int      beam_group_count     = config.interlocking_beam_group_count;
+    const int      beam_gap             = config.interlocking_beam_gap;
 
     const DilationKernel interface_dilation(GridPoint3(interface_depth, interface_depth, interface_depth), DilationKernel::Type::PRISM);
 
@@ -65,7 +71,8 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
             }
 
             InterlockingGenerator gen(*print_object, region_a_index, region_b_index, beam_width, boundary_avoidance, rotation, cell_size, beam_layer_count,
-                                      interface_dilation, air_dilation, air_filtering, bidirectional, skip_layers);
+                                      interface_dilation, air_dilation, air_filtering, bidirectional, skip_layers,
+                                      beam_group_count, beam_gap);
             gen.generateInterlockingStructure();
         }
     }
@@ -308,6 +315,17 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
     structure_per_layer[0].resize(num_interlocking_layers);
     structure_per_layer[1].resize(num_interlocking_layers);
 
+    // Compute filtered cell sets per beam direction (only when enabled — avoids copying)
+    const bool density_enabled = beam_group_count > 0 && beam_gap > 0;
+    std::unordered_set<GridPoint3> filtered_type0_storage, filtered_type1_storage;
+    if (density_enabled) {
+        filtered_type0_storage = filterCellsForAxis(cells, 0); // X-rows, for even beam layers
+        if (bidirectional)
+            filtered_type1_storage = filterCellsForAxis(cells, 1); // Y-rows, only needed in bidirectional mode
+    }
+    const auto& filtered_type0 = density_enabled ? filtered_type0_storage : cells;
+    const auto& filtered_type1 = density_enabled ? filtered_type1_storage : cells;
+
     // Only compute cell structure for half the layers, because since our beams are two layers high, every odd layer of the structure will
     // be the same as the layer below.
     for (const GridPoint3& grid_loc : cells) {
@@ -323,6 +341,12 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
 
                 // Skip perpendicular layers in unidirectional mode
                 if (!bidirectional && layer_type == 1)
+                    continue;
+
+                // Density filter: check against the filtered set for this layer type
+                if (layer_type == 0 && !filtered_type0.count(grid_loc))
+                    continue;
+                if (layer_type == 1 && !filtered_type1.count(grid_loc))
                     continue;
 
                 ExPolygons areas_here = cell_area_per_mesh_per_layer[layer_type][mesh_idx];
@@ -365,6 +389,104 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
                                 areas_here)                  // extend layer areas outward with newly added beams
                        , stInternal);
         }
+    }
+}
+
+std::unordered_set<GridPoint3> InterlockingGenerator::filterCellsForAxis(
+    const std::unordered_set<GridPoint3>& cells, int axis) const
+{
+    // Helper: apply 5-zone pattern to a single contiguous segment of positions.
+    // Algorithm: M beams at left end, G gap, middle fill (M beams + G gap repeating L→R,
+    // last group truncated), G gap, M beams at right end.
+    // For segments longer than 2*M, max consecutive beams is capped at M.
+    auto filterSegment = [this](const std::vector<coord_t>& positions) -> std::set<coord_t> {
+        std::set<coord_t> keep;
+        int count = (int)positions.size();
+        int M = beam_group_count;
+        int G = beam_gap;
+
+        // Short segment: ends overlap, keep all
+        if (count <= 2 * M) {
+            for (auto& p : positions) keep.insert(p);
+            return keep;
+        }
+
+        // Left end: M beams
+        for (int i = 0; i < M; i++)
+            keep.insert(positions[i]);
+
+        // Right end: M beams
+        for (int i = count - M; i < count; i++)
+            keep.insert(positions[i]);
+
+        // Middle fill zone: from (M + G) to (count - M - G - 1)
+        int middle_start = M + G;
+        int middle_end = count - M - G;  // exclusive
+        if (middle_start < middle_end) {
+            int stride = M + G;
+            for (int i = middle_start; i < middle_end; i++) {
+                int pos_in_stride = (i - middle_start) % stride;
+                if (pos_in_stride < M)
+                    keep.insert(positions[i]);
+            }
+        }
+
+        return keep;
+    };
+
+    // Helper: split a sorted row of positions into contiguous segments
+    // (where consecutive grid coordinates differ by exactly 1), then apply
+    // the 5-zone pattern independently to each segment.
+    // This ensures both sides of any gap get anchored beam ends.
+    auto filterRow = [&filterSegment](std::vector<coord_t>& positions) -> std::set<coord_t> {
+        std::set<coord_t> keep;
+        std::sort(positions.begin(), positions.end());
+
+        // Split into contiguous segments
+        std::vector<coord_t> segment;
+        segment.push_back(positions[0]);
+        for (size_t i = 1; i < positions.size(); i++) {
+            if (positions[i] != positions[i - 1] + 1) {
+                // Gap detected — filter the current segment and start a new one
+                auto seg_keep = filterSegment(segment);
+                keep.insert(seg_keep.begin(), seg_keep.end());
+                segment.clear();
+            }
+            segment.push_back(positions[i]);
+        }
+        // Filter the last segment
+        auto seg_keep = filterSegment(segment);
+        keep.insert(seg_keep.begin(), seg_keep.end());
+
+        return keep;
+    };
+
+    if (axis == 0) {
+        // Filter X-rows: group by (y, z), vary along x — for even beam layers (type 0)
+        std::map<std::pair<coord_t, coord_t>, std::vector<coord_t>> rows;
+        for (const auto& cell : cells)
+            rows[{cell.y(), cell.z()}].push_back(cell.x());
+
+        std::unordered_set<GridPoint3> result;
+        for (auto& [key, positions] : rows) {
+            auto keep_set = filterRow(positions);
+            for (coord_t x : keep_set)
+                result.insert(GridPoint3(x, key.first, key.second));
+        }
+        return result;
+    } else {
+        // Filter Y-rows: group by (x, z), vary along y — for odd beam layers (type 1)
+        std::map<std::pair<coord_t, coord_t>, std::vector<coord_t>> rows;
+        for (const auto& cell : cells)
+            rows[{cell.x(), cell.z()}].push_back(cell.y());
+
+        std::unordered_set<GridPoint3> result;
+        for (auto& [key, positions] : rows) {
+            auto keep_set = filterRow(positions);
+            for (coord_t y : keep_set)
+                result.insert(GridPoint3(key.first, y, key.second));
+        }
+        return result;
     }
 }
 

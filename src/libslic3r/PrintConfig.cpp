@@ -3981,6 +3981,26 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
+    def           = this->add("interlocking_beam_group_count", coInt);
+    def->label    = L("Beam group count");
+    def->tooltip  = L("Number of consecutive interlocking beams per group. Both ends of a segment always get a full group, "
+                       "with the remaining middle filled left-to-right. Set to 0 for unlimited (current behavior). "
+                       "Both this and beam gap must be greater than 0 to enable density control.");
+    def->min      = 0;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def           = this->add("interlocking_beam_gap", coInt);
+    def->label    = L("Beam gap");
+    def->tooltip  = L("Number of empty cells between beam groups. Set to 0 for no gaps (all beams placed). "
+                       "Both this and beam group count must be greater than 0 to enable density control.");
+    def->min      = 0;
+    def->max      = 100;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     // ORCA: special flag for flow rate calibration
     def           = this->add("calib_flowrate_topinfill_special_order", coBool);
     def->mode     = comDevelop;
