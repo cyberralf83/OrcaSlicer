@@ -1717,7 +1717,7 @@ bool GUI_App::hot_reload_network_plugin()
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": starting hot reload";
 
     wxBusyCursor busy;
-    wxBusyInfo info(_L("Reloading network plugin..."), mainframe);
+    wxBusyInfo info(_L("Reloading network plug-in..."), mainframe);
     wxYield();
     wxWindowDisabler disabler;
 
@@ -1860,7 +1860,7 @@ void GUI_App::show_network_plugin_download_dialog(bool is_update)
             app_config->set_network_plugin_version(selected);
             app_config->save();
 
-            DownloadProgressDialog download_dlg(_L("Downloading Network Plugin"));
+            DownloadProgressDialog download_dlg(_L("Downloading Network Plug-in"));
             download_dlg.ShowModal();
         }
         break;
@@ -2695,6 +2695,18 @@ bool GUI_App::on_init_inner()
     // TODO: Find workaround for GTK4
 #if defined(__WXGTK20__) || defined(__WXGTK3__)
     g_object_set (gtk_settings_get_default (), "gtk-menu-images", TRUE, NULL);
+#endif
+
+#if defined(__WXGTK20__) || defined(__WXGTK3__)
+    // Suppress harmless GTK critical warnings from the GTK3/wxWidgets interaction.
+    // These include widget allocation on hidden widgets and events on unrealized widgets.
+    g_log_set_handler("Gtk", G_LOG_LEVEL_CRITICAL,
+        [](const gchar *log_domain, GLogLevelFlags log_level, const gchar *message, gpointer user_data) {
+            if (message && (strstr(message, "gtk_widget_set_allocation") ||
+                            strstr(message, "WIDGET_REALIZED_FOR_EVENT")))
+                return;
+            g_log_default_handler(log_domain, log_level, message, user_data);
+        }, nullptr);
 #endif
 
 #ifdef WIN32
@@ -5516,7 +5528,7 @@ bool GUI_App::process_network_msg(std::string dev_id, std::string msg)
                            "2. Enable Developer mode\n\n"
                            "Developer mode allows the printer to work exclusively through local network access, "
                            "enabling full functionality with OrcaSlicer."),
-                        _L("Network Plugin Restriction"), wxAPPLY | wxOK);
+                        _L("Network Plug-in Restriction"), wxAPPLY | wxOK);
             m_show_error_msgdlg = true;
             msg_dlg.ShowModal();
             m_show_error_msgdlg = false;
