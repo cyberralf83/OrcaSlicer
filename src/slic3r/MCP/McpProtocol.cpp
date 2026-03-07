@@ -273,16 +273,10 @@ McpApiServer::Response McpProtocol::handle_mcp_request(
         return json_http_response(make_result(id, result).dump());
     }
 
-    // --- All other methods require an initialized session ---
-    if (session_id.empty() || !is_valid_session(session_id)) {
-        auto err = make_error(id, -32600, "Bad Request: missing or invalid Mcp-Session-Id");
-        return json_http_response(err.dump(), 400);
-    }
-
-    if (!is_initialized_session(session_id)) {
-        auto err = make_error(id, -32600, "Session not initialized");
-        return json_http_response(err.dump(), 400);
-    }
+    // --- Session validation ---
+    // Local single-user server: skip strict session enforcement.
+    // The initialize/initialized handshake is still supported for spec compliance,
+    // but we don't reject requests with missing or stale session IDs.
 
     // --- tools/list ---
     if (method == "tools/list") {

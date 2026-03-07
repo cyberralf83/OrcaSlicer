@@ -83,11 +83,11 @@ TEST_CASE("MCP protocol lifecycle", "[MCP][Protocol]") {
         REQUIRE_FALSE(resp.extra_headers.at("Mcp-Session-Id").empty());
     }
 
-    SECTION("tools/list before initialize returns error") {
+    SECTION("tools/list works without prior initialize (lenient local server)") {
         json req = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}};
-        // No session header at all
         auto resp = send_request(proto, req);
-        REQUIRE(resp.contains("error"));
+        REQUIRE(resp.contains("result"));
+        REQUIRE(resp["result"]["tools"].size() == 21);
     }
 
     SECTION("notifications/initialized returns 202 status") {
@@ -156,10 +156,18 @@ TEST_CASE("MCP protocol lifecycle", "[MCP][Protocol]") {
         REQUIRE(resp["error"]["code"] == -32601);
     }
 
-    SECTION("Invalid session ID returns 400") {
+    SECTION("Stale session ID is accepted (local server is lenient)") {
         json req = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}};
-        auto resp = proto.handle_mcp_request(req.dump(), {{"mcp-session-id", "bogus-session-id"}});
-        REQUIRE(resp.status_code == 400);
+        auto resp = send_request(proto, req, {{"mcp-session-id", "bogus-session-id"}});
+        REQUIRE(resp.contains("result"));
+        REQUIRE(resp["result"]["tools"].size() == 21);
+    }
+
+    SECTION("No session ID is accepted (local server is lenient)") {
+        json req = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}};
+        auto resp = send_request(proto, req, {});
+        REQUIRE(resp.contains("result"));
+        REQUIRE(resp["result"]["tools"].size() == 21);
     }
 
     SECTION("Multiple sessions work independently") {
