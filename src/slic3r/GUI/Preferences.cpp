@@ -18,6 +18,10 @@
 #include "slic3r/Utils/bambu_networking.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "DownloadProgressDialog.hpp"
+#ifdef ENABLE_MCP_SERVER
+#include <wx/clipbrd.h>
+#include "MCP/McpApiServer.h"
+#endif
 
 #ifdef __WINDOWS__
 #ifdef _MSW_DARK_MODE
@@ -1742,6 +1746,95 @@ void PreferencesDialog::create_items()
         }
     });
     g_sizer->Add(item_reload_plugin);
+
+#ifdef ENABLE_MCP_SERVER
+    //// DEVELOPER > MCP Server
+    g_sizer->Add(create_item_title(_L("MCP Server (AI Agent Integration)")), 1, wxEXPAND);
+
+    // Helper: get configured port with safe parsing
+    auto get_mcp_port = [this]() -> int {
+        auto port_str = app_config->get("mcp_server_port");
+        if (!port_str.empty()) {
+            try { return std::stoi(port_str); } catch (...) {}
+        }
+        return MCP_API_PORT;
+    };
+
+    // Helper: update status label to reflect current server state
+    auto update_mcp_status = [this, get_mcp_port]() {
+        if (!m_mcp_status_label) return;
+        if (wxGetApp().is_mcp_server_running()) {
+            m_mcp_status_label->SetLabel(wxString::Format(_L("Running on port %d"), get_mcp_port()));
+            m_mcp_status_label->SetForegroundColour(wxColour("#00AE42"));
+        } else {
+            m_mcp_status_label->SetLabel(_L("Stopped"));
+            m_mcp_status_label->SetForegroundColour(DESIGN_GRAY600_COLOR);
+        }
+    };
+
+    // Status label
+    {
+        wxBoxSizer *sizer_status = new wxBoxSizer(wxHORIZONTAL);
+        sizer_status->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+        m_mcp_status_label = new wxStaticText(m_parent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize);
+        m_mcp_status_label->SetFont(::Label::Body_14);
+        update_mcp_status();
+        sizer_status->Add(m_mcp_status_label, 0, wxALIGN_CENTER_VERTICAL);
+        g_sizer->Add(sizer_status);
+    }
+
+    // Enable checkbox
+    {
+        wxBoxSizer *sizer_cb = new wxBoxSizer(wxHORIZONTAL);
+        sizer_cb->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+
+        auto cb_title = new wxStaticText(m_parent, wxID_ANY, _L("Enable MCP Server"), wxDefaultPosition, DESIGN_TITLE_SIZE, wxST_NO_AUTORESIZE);
+        cb_title->SetForegroundColour(DESIGN_GRAY900_COLOR);
+        cb_title->SetFont(::Label::Body_14);
+        cb_title->SetToolTip(_L("Enable or disable the MCP server for AI agent integration"));
+        cb_title->Wrap(DESIGN_TITLE_SIZE.x);
+
+        auto mcp_checkbox = new ::CheckBox(m_parent);
+        mcp_checkbox->SetValue(app_config->get_bool("mcp_server_enabled") || app_config->get("mcp_server_enabled").empty());
+        mcp_checkbox->SetToolTip(_L("Enable or disable the MCP server for AI agent integration"));
+
+        sizer_cb->Add(cb_title,     0, wxALIGN_CENTER | wxTOP | wxBOTTOM, FromDIP(3));
+        sizer_cb->Add(mcp_checkbox, 0, wxALIGN_CENTER | wxRIGHT | wxLEFT, FromDIP(5));
+
+        mcp_checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, mcp_checkbox, update_mcp_status](wxCommandEvent &e) {
+            bool enabled = mcp_checkbox->GetValue();
+            app_config->set_bool("mcp_server_enabled", enabled);
+            app_config->save();
+            if (enabled)
+                wxGetApp().start_mcp_server();
+            else
+                wxGetApp().stop_mcp_server();
+            update_mcp_status();
+        });
+
+        g_sizer->Add(sizer_cb);
+    }
+
+    // Port input
+    auto item_mcp_port = create_item_input(_L("Port"), "", _L("MCP server port (requires restart to take effect)"), "mcp_server_port");
+    if (app_config->get("mcp_server_port").empty())
+        app_config->set("mcp_server_port", std::to_string(MCP_API_PORT));
+    g_sizer->Add(item_mcp_port);
+
+    // Copy MCP Config button
+    auto item_copy_config = create_item_button(_L("MCP Configuration"), _L("Copy MCP Config"), _L("Copy MCP server configuration JSON to clipboard"), "", [this, get_mcp_port]() {
+        wxString json = wxString::Format(
+            "{\"mcpServers\":{\"orca-slicer\":{\"type\":\"streamable-http\",\"url\":\"http://localhost:%d/mcp\"}}}",
+            get_mcp_port());
+        if (wxTheClipboard->Open()) {
+            wxTheClipboard->SetData(new wxTextDataObject(json));
+            wxTheClipboard->Close();
+            MessageDialog dlg(this, _L("MCP configuration copied to clipboard."), _L("MCP Server"), wxOK | wxICON_INFORMATION);
+            dlg.ShowModal();
+        }
+    });
+    g_sizer->Add(item_copy_config);
+#endif // ENABLE_MCP_SERVER
 
     //// DEVELOPER > Debug
 #if !BBL_RELEASE_TO_PUBLIC

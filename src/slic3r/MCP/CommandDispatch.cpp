@@ -17,6 +17,7 @@
 #include <set>
 #include <wx/app.h>
 #include "GUI/OpenGLManager.hpp"
+#include "GUI/Tab.hpp"
 
 using namespace nlohmann;
 
@@ -399,16 +400,30 @@ void CommandDispatch::register_config_commands() {
 
     register_command("config.set", [this](const json& params) -> json {
         return call_on_gui_thread([&]() -> json {
-            auto* plater = wxGetApp().plater();
+            const json& settings = unwrap_config_settings(params);
             DynamicPrintConfig new_config;
-            for (auto it = params.begin(); it != params.end(); ++it) {
+            for (auto it = settings.begin(); it != settings.end(); ++it) {
                 const std::string& key = it.key();
                 const std::string val = it.value().is_string() ? it.value().get<std::string>() : it.value().dump();
                 if (print_config_def.has(key)) {
                     new_config.set_deserialize_strict(key, val);
                 }
             }
-            plater->on_config_change(new_config);
+
+            // Apply to the appropriate Tab so changes persist in the preset system.
+            // Try print tab first (most settings), then filament, then printer.
+            for (auto type : {Preset::TYPE_PRINT, Preset::TYPE_FILAMENT, Preset::TYPE_PRINTER}) {
+                Tab* tab = wxGetApp().get_tab(type);
+                if (!tab) continue;
+                DynamicPrintConfig tab_subset;
+                for (auto& opt_key : new_config.keys()) {
+                    if (tab->get_config()->has(opt_key))
+                        tab_subset.set_key_value(opt_key, new_config.option(opt_key)->clone());
+                }
+                if (!tab_subset.empty())
+                    tab->load_config(tab_subset);
+            }
+
             return json{{"updated", true}};
         });
     });

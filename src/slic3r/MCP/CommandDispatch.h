@@ -42,4 +42,13 @@ private:
     void register_viewport_commands();
 };
 
+// Unwrap the "settings" wrapper from config_set tool arguments.
+// The MCP tool schema sends {"settings": {"key": "value"}}, but the handler
+// needs to iterate over the inner {"key": "value"} map directly.
+inline const nlohmann::json& unwrap_config_settings(const nlohmann::json& params) {
+    if (params.contains("settings") && params["settings"].is_object())
+        return params["settings"];
+    return params;
+}
+
 }} // namespace Slic3r::GUI

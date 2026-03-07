@@ -3,6 +3,7 @@
 #include <memory>
 #include "MCP/McpProtocol.h"
 #include "MCP/ToolSchemas.h"
+#include "MCP/CommandDispatch.h"
 
 using json = nlohmann::json;
 using namespace Slic3r::GUI;
@@ -184,5 +185,140 @@ TEST_CASE("MCP protocol lifecycle", "[MCP][Protocol]") {
         REQUIRE(resp1.contains("result"));
         REQUIRE(resp2.contains("result"));
         REQUIRE(resp1["result"]["tools"].size() == resp2["result"]["tools"].size());
+    }
+
+    SECTION("Initialize as notification (no id) returns error -32600") {
+        json req = {
+            {"jsonrpc", "2.0"}, {"method", "initialize"},
+            {"params", {
+                {"protocolVersion", "2025-03-26"},
+                {"capabilities", json::object()},
+                {"clientInfo", {{"name", "test"}, {"version", "1.0"}}}
+            }}
+        };
+        auto resp = proto.handle_mcp_request(req.dump(), {});
+        REQUIRE(resp.status_code == 400);
+        auto body = json::parse(resp.body);
+        REQUIRE(body["error"]["code"] == -32600);
+    }
+
+    SECTION("tools/list as notification (no id) returns error -32600") {
+        json req = {{"jsonrpc", "2.0"}, {"method", "tools/list"}};
+        auto resp = proto.handle_mcp_request(req.dump(), {});
+        REQUIRE(resp.status_code == 400);
+        auto body = json::parse(resp.body);
+        REQUIRE(body["error"]["code"] == -32600);
+    }
+
+    SECTION("tools/call as notification (no id) returns error -32600") {
+        json req = {
+            {"jsonrpc", "2.0"}, {"method", "tools/call"},
+            {"params", {{"name", "get_state"}, {"arguments", json::object()}}}
+        };
+        auto resp = proto.handle_mcp_request(req.dump(), {});
+        REQUIRE(resp.status_code == 400);
+        auto body = json::parse(resp.body);
+        REQUIRE(body["error"]["code"] == -32600);
+    }
+
+    SECTION("ping as notification (no id) returns 202") {
+        json req = {{"jsonrpc", "2.0"}, {"method", "ping"}};
+        auto resp = proto.handle_mcp_request(req.dump(), {});
+        REQUIRE(resp.status_code == 202);
+        REQUIRE(resp.body.empty());
+    }
+
+    SECTION("Response id matches request id") {
+        json req = {{"jsonrpc", "2.0"}, {"id", 42}, {"method", "tools/list"}};
+        auto resp = send_request(proto, req);
+        REQUIRE(resp["id"] == 42);
+    }
+
+    SECTION("tools/list returns name, description, and inputSchema for each tool") {
+        json req = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}};
+        auto resp = send_request(proto, req);
+        auto tools = resp["result"]["tools"];
+        for (const auto& tool : tools) {
+            INFO("Tool: " + tool["name"].get<std::string>());
+            REQUIRE(tool.contains("name"));
+            REQUIRE(tool.contains("description"));
+            REQUIRE(tool.contains("inputSchema"));
+            REQUIRE(tool["inputSchema"].contains("type"));
+            REQUIRE(tool["inputSchema"]["type"] == "object");
+        }
+    }
+
+    SECTION("Error response has null id when request has no id") {
+        // Unknown method with no id — still returns error with null id
+        json req = {{"jsonrpc", "2.0"}, {"method", "unknown/method"}};
+        auto resp = proto.handle_mcp_request(req.dump(), {});
+        // Unknown method without id is not a notification we handle,
+        // so it falls through to the error path
+        auto body = json::parse(resp.body);
+        REQUIRE(body.contains("error"));
+        REQUIRE(body["id"].is_null());
+    }
+
+    SECTION("method field as non-string returns error -32600") {
+        json req = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", 123}};
+        auto resp = proto.handle_mcp_request(req.dump(), {});
+        REQUIRE(resp.status_code == 400);
+        auto body = json::parse(resp.body);
+        REQUIRE(body["error"]["code"] == -32600);
+    }
+
+    SECTION("tools/call with missing name param returns error -32602") {
+        json req = {
+            {"jsonrpc", "2.0"}, {"id", 3}, {"method", "tools/call"},
+            {"params", {{"arguments", json::object()}}}
+        };
+        auto resp = send_request(proto, req);
+        REQUIRE(resp.contains("error"));
+        REQUIRE(resp["error"]["code"] == -32602);
+    }
+
+    SECTION("Empty tools list works when no tools registered") {
+        McpProtocol empty_proto;
+        empty_proto.init({});
+        json req = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}};
+        auto resp = empty_proto.handle_mcp_request(req.dump(), {});
+        auto body = json::parse(resp.body);
+        REQUIRE(body["result"]["tools"].is_array());
+        REQUIRE(body["result"]["tools"].size() == 0);
+    }
+}
+
+TEST_CASE("unwrap_config_settings extracts settings correctly", "[MCP][ConfigSet]") {
+    using json = nlohmann::json;
+    using namespace Slic3r::GUI;
+
+    SECTION("Unwraps settings wrapper from MCP tool arguments") {
+        json params = {{"settings", {{"layer_height", "0.2"}, {"infill_density", "15"}}}};
+        const json& result = unwrap_config_settings(params);
+        REQUIRE(result.contains("layer_height"));
+        REQUIRE(result.contains("infill_density"));
+        REQUIRE(result["layer_height"] == "0.2");
+        REQUIRE(result["infill_density"] == "15");
+    }
+
+    SECTION("Falls back to params when no settings wrapper") {
+        json params = {{"layer_height", "0.2"}, {"infill_density", "15"}};
+        const json& result = unwrap_config_settings(params);
+        REQUIRE(result.contains("layer_height"));
+        REQUIRE(result["layer_height"] == "0.2");
+    }
+
+    SECTION("Does not unwrap non-object settings value") {
+        json params = {{"settings", "not_an_object"}, {"layer_height", "0.3"}};
+        const json& result = unwrap_config_settings(params);
+        REQUIRE(result.contains("layer_height"));
+        REQUIRE(result["layer_height"] == "0.3");
+    }
+
+    SECTION("Handles empty settings object") {
+        json params = {{"settings", json::object()}};
+        const json& result = unwrap_config_settings(params);
+        REQUIRE(result.is_object());
+        REQUIRE(result.empty());
     }
 }

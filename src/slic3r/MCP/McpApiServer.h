@@ -42,6 +42,8 @@ public:
     void start();
     void stop();
     bool is_running() const { return m_running; }
+    int  port() const { return m_port; }
+    void set_port(int port) { if (!m_running) m_port = port; }
 
 private:
     class Session;

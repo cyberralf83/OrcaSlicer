@@ -105,4 +105,73 @@ TEST_CASE("Tool schema definitions", "[MCP][ToolSchemas]") {
         }
         REQUIRE(has_keys);
     }
+
+    SECTION("Each non-screenshot tool has a non-empty dispatch_action") {
+        for (const auto& tool : tools) {
+            if (tool.is_screenshot) continue;
+            INFO("Tool: " + tool.name);
+            REQUIRE_FALSE(tool.dispatch_action.empty());
+        }
+    }
+
+    SECTION("Only screenshot tool has is_screenshot=true") {
+        for (const auto& tool : tools) {
+            INFO("Tool: " + tool.name);
+            if (tool.name == "screenshot") {
+                REQUIRE(tool.is_screenshot);
+            } else {
+                REQUIRE_FALSE(tool.is_screenshot);
+            }
+        }
+    }
+
+    SECTION("object_transform has translate, scale, rotate properties") {
+        const McpToolDef* tool = nullptr;
+        for (const auto& t : tools) {
+            if (t.name == "object_transform") {
+                tool = &t;
+                break;
+            }
+        }
+        REQUIRE(tool != nullptr);
+        auto props = tool->input_schema["properties"];
+        REQUIRE(props.contains("index"));
+        REQUIRE(props.contains("translate"));
+        REQUIRE(props.contains("scale"));
+        REQUIRE(props.contains("rotate"));
+    }
+
+    SECTION("Tools with required fields have them listed correctly") {
+        std::map<std::string, std::vector<std::string>> expected_required = {
+            {"model_add_primitive", {"type"}},
+            {"model_load_file", {"path"}},
+            {"model_delete_object", {"index"}},
+            {"object_transform", {"index"}},
+            {"model_export", {"path"}},
+            {"config_get", {"keys"}},
+            {"config_set", {"settings"}},
+            {"mesh_stats", {"index"}},
+            {"viewport_select_view", {"view"}},
+            {"viewport_zoom", {"delta"}},
+        };
+        for (const auto& [tool_name, req_fields] : expected_required) {
+            const McpToolDef* tool = nullptr;
+            for (const auto& t : tools) {
+                if (t.name == tool_name) { tool = &t; break; }
+            }
+            INFO("Tool: " + tool_name);
+            REQUIRE(tool != nullptr);
+            REQUIRE(tool->input_schema.contains("required"));
+            auto required = tool->input_schema["required"];
+            REQUIRE(required.size() == req_fields.size());
+            for (const auto& field : req_fields) {
+                bool found = false;
+                for (const auto& r : required) {
+                    if (r == field) found = true;
+                }
+                INFO("Missing required field: " + field);
+                REQUIRE(found);
+            }
+        }
+    }
 }

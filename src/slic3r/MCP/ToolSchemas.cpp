@@ -13,7 +13,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
     // -----------------------------------------------------------------------
     tools.push_back({
         "screenshot",
-        "Capture the current OrcaSlicer viewport as a PNG image. By default captures exactly what the user sees (viewport mode). Use mode=thumbnail for a fixed orthographic thumbnail.",
+        "Capture the current OrcaSlicer viewport as a PNG image. Returns a base64-encoded PNG image. By default captures exactly what the user sees (viewport mode), including UI elements. Use mode=thumbnail for a clean orthographic render without UI overlays via FBO off-screen rendering.",
         {
             {"type", "object"},
             {"properties", {
@@ -31,7 +31,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
     // -----------------------------------------------------------------------
     tools.push_back({
         "model_list_objects",
-        "List all objects currently on the build plate.",
+        "List all objects currently on the build plate. Returns an array of objects with their name, index, volume count, and axis-aligned bounding box (min/max XYZ coordinates in mm). Use the returned index to reference objects in other tools like object_transform, model_delete_object, or mesh_stats.",
         {
             {"type", "object"},
             {"properties", json::object()}
@@ -41,14 +41,14 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "model_add_primitive",
-        "Add a primitive shape (cube, cylinder, or sphere) to the build plate.",
+        "Add a primitive shape (cube, cylinder, or sphere) to the build plate. Default size is 20mm per axis. Dimensions x/y/z override the default. The object is placed at the center of the build plate. Use object_transform afterwards to position, scale, or rotate it. For example, a sphere can be scaled non-uniformly to create an ellipsoid.",
         {
             {"type", "object"},
             {"properties", {
                 {"type", {{"type", "string"}, {"enum", json::array({"cube", "cylinder", "sphere"})}, {"description", "Primitive shape type"}}},
-                {"x",    {{"type", "number"}, {"description", "X dimension/size"}}},
-                {"y",    {{"type", "number"}, {"description", "Y dimension/size"}}},
-                {"z",    {{"type", "number"}, {"description", "Z dimension/size"}}}
+                {"x",    {{"type", "number"}, {"description", "Size in mm along the X axis (default: 20mm)"}}},
+                {"y",    {{"type", "number"}, {"description", "Size in mm along the Y axis (default: 20mm)"}}},
+                {"z",    {{"type", "number"}, {"description", "Size in mm along the Z axis (default: 20mm)"}}}
             }},
             {"required", json::array({"type"})}
         },
@@ -57,7 +57,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "model_load_file",
-        "Load a 3D model file (STL, 3MF, OBJ, STEP) onto the build plate.",
+        "Load a 3D model file onto the build plate. Supports STL, 3MF, OBJ, and STEP formats. The path must be absolute. Large models (1M+ triangles) may cause slower processing. The object is auto-centered on the build plate after loading.",
         {
             {"type", "object"},
             {"properties", {
@@ -70,7 +70,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "model_delete_object",
-        "Delete an object from the build plate by its index.",
+        "Delete an object from the build plate by its index. Get the object index from model_list_objects first. Indices may shift after deletion -- re-query model_list_objects if deleting multiple objects.",
         {
             {"type", "object"},
             {"properties", {
@@ -83,14 +83,14 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "object_transform",
-        "Transform an object on the build plate: translate, scale, and/or rotate.",
+        "Apply translate, scale, and/or rotate transforms to an object on the build plate. Translate sets absolute position [x, y, z] in mm (not a relative offset). Scale multiplies the original dimensions -- e.g., [2,1,1] doubles width. Rotate sets angles in degrees around each axis. Multiple transforms can be combined in one call. Note: OrcaSlicer may auto-drop objects to the bed (Z=0); objects cannot be positioned below Z=0 for printing.",
         {
             {"type", "object"},
             {"properties", {
                 {"index",     {{"type", "integer"}, {"description", "Index of the object to transform"}}},
-                {"translate", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}, {"description", "Translation [x, y, z] in mm"}}},
-                {"scale",     {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}, {"description", "Scale factors [x, y, z]"}}},
-                {"rotate",    {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}, {"description", "Rotation angles [x, y, z] in degrees"}}}
+                {"translate", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}, {"description", "Absolute position [x, y, z] in mm. The object's center will be placed at these coordinates."}}},
+                {"scale",     {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}, {"description", "Scale multipliers [x, y, z] relative to original size. E.g., [2, 1, 0.5] doubles width, keeps depth, halves height."}}},
+                {"rotate",    {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}, {"description", "Rotation angles [x, y, z] in degrees. Applied around each respective axis."}}}
             }},
             {"required", json::array({"index"})}
         },
@@ -99,7 +99,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "model_export",
-        "Export the current model/plate to a file.",
+        "Export the current plate contents to a file. 3MF format preserves all metadata and multi-object structure; STL exports only geometry. The output path must be absolute with the appropriate file extension (.3mf or .stl).",
         {
             {"type", "object"},
             {"properties", {
@@ -116,7 +116,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
     // -----------------------------------------------------------------------
     tools.push_back({
         "config_get",
-        "Get the current values of one or more OrcaSlicer config settings.",
+        "Retrieve current values of slicer configuration keys. Keys include print settings (layer_height, infill_density, wall_loops, etc.), printer settings, and filament settings. Use config_list_options to discover available keys. Returns a JSON object mapping each key to its current value.",
         {
             {"type", "object"},
             {"properties", {
@@ -129,7 +129,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "config_set",
-        "Set one or more OrcaSlicer config settings. Pass key-value pairs.",
+        "Update slicer configuration settings. Pass a JSON object with key-value pairs. Changes take effect immediately and affect subsequent slicing. Example: {\"settings\": {\"layer_height\": \"0.2\", \"infill_density\": \"15%\"}}. Use config_list_options to discover valid keys and value ranges.",
         {
             {"type", "object"},
             {"properties", {
@@ -142,7 +142,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "config_list_options",
-        "List available config options, optionally filtered by a search term.",
+        "List available configuration options with their types, default values, and valid ranges. Use the optional filter parameter to search by keyword -- e.g., filter='infill' returns all infill-related settings. Useful for discovering what settings are available before using config_get or config_set.",
         {
             {"type", "object"},
             {"properties", {
@@ -154,7 +154,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "config_load_profile",
-        "Load a printer/material/process profile by name or file path.",
+        "Load a complete printer, material, or process profile by name or file path. Profile names should match those shown in the OrcaSlicer UI (e.g., '0.20mm Standard @BBL A1'). This replaces the current settings for that profile type. Provide either name or path, not both.",
         {
             {"type", "object"},
             {"properties", {
@@ -170,7 +170,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
     // -----------------------------------------------------------------------
     tools.push_back({
         "mesh_stats",
-        "Get mesh statistics for an object (vertex count, face count, volume, etc.).",
+        "Get detailed mesh statistics for an object: vertex count, face count, bounding box dimensions, volume (cm3), surface area, and mesh repair status. Useful for checking model complexity before slicing. Get the object index from model_list_objects.",
         {
             {"type", "object"},
             {"properties", {
@@ -183,7 +183,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "validate_print",
-        "Validate the current print setup and report any warnings or errors.",
+        "Check the current print setup for issues without slicing. Reports warnings (e.g., objects outside printable area, unsupported overhangs) and errors (e.g., no objects on plate, invalid settings). Run this before slice_and_stats to catch problems early.",
         {
             {"type", "object"},
             {"properties", json::object()}
@@ -193,7 +193,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "slice_and_stats",
-        "Slice the current plate and return slicing statistics (time, filament usage, layers, etc.).",
+        "Slice the current plate and return statistics including estimated print time, filament usage (length and weight), total layers, and per-object details. This triggers a full slice operation which may take several seconds for complex models. Check slice_status for progress on long-running slices.",
         {
             {"type", "object"},
             {"properties", json::object()}
@@ -203,7 +203,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "slice_status",
-        "Check the current slicing status. Returns whether slicing is in progress, finished, print time estimates, filament usage, and any validation errors/warnings.",
+        "Check whether slicing is currently in progress, completed, or not started. When complete, returns print time estimates, filament usage, layer count, and any warnings. Use this to poll for completion after calling slice_and_stats, or to get cached results from the last slice.",
         {
             {"type", "object"},
             {"properties", json::object()}
@@ -213,7 +213,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "get_state",
-        "Get the current overall state of OrcaSlicer (loaded models, active profile, plate info).",
+        "Get a comprehensive snapshot of OrcaSlicer's current state: all objects on the plate (with bounding boxes), active printer/filament/process profiles, plate dimensions and printable area, current camera position/zoom, and whether slicing is in progress. This is the best starting point to understand what is currently loaded.",
         {
             {"type", "object"},
             {"properties", json::object()}
@@ -226,7 +226,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
     // -----------------------------------------------------------------------
     tools.push_back({
         "viewport_select_view",
-        "Set the 3D viewport to a standard camera view preset (front, rear, top, bottom, left, right, iso, topfront).",
+        "Set the 3D viewport to a standard camera angle. Available presets: front, rear, top, bottom, left, right, iso (isometric 3/4 view), topfront (angled top-down). Useful for taking consistent screenshots from known angles.",
         {
             {"type", "object"},
             {"properties", {
@@ -239,7 +239,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "viewport_zoom_to_bed",
-        "Zoom the viewport to fit the entire build plate/bed in view.",
+        "Reset the viewport to show the entire build plate. Useful after zooming in on details, or to get an overview of all objects on the plate.",
         {
             {"type", "object"},
             {"properties", json::object()}
@@ -249,7 +249,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "viewport_zoom_to_volumes",
-        "Zoom the viewport to fit all objects/volumes in view.",
+        "Auto-zoom the viewport to fit all objects tightly in view. Provides a tighter view than zoom_to_bed when objects don't fill the entire plate. Best used after adding or repositioning objects.",
         {
             {"type", "object"},
             {"properties", json::object()}
@@ -259,7 +259,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "viewport_zoom",
-        "Zoom the viewport in or out by a delta amount. Positive values zoom in, negative values zoom out.",
+        "Adjust the viewport zoom level incrementally. Positive delta zooms in, negative zooms out. Typical range: -5.0 to 5.0 for noticeable changes. Combine with viewport_select_view for precise camera positioning before taking screenshots.",
         {
             {"type", "object"},
             {"properties", {
@@ -272,7 +272,7 @@ std::vector<McpToolDef> get_all_tool_definitions()
 
     tools.push_back({
         "viewport_camera_info",
-        "Get current camera/viewport information including type, position, target, zoom level, and viewport dimensions.",
+        "Get the current camera state: projection type (perspective/orthographic), position [x,y,z], look-at target [x,y,z], zoom level, and viewport pixel dimensions. Useful for saving/restoring camera positions or calculating object visibility.",
         {
             {"type", "object"},
             {"properties", json::object()}

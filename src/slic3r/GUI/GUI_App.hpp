@@ -520,6 +520,8 @@ public:
     void            stop_http_server();
 #ifdef ENABLE_MCP_SERVER
     void            start_mcp_server();
+    void            stop_mcp_server();
+    bool            is_mcp_server_running() const;
 #endif
     void            switch_staff_pick(bool on);
 
