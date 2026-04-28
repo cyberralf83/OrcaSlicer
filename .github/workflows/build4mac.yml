@@ -209,9 +209,16 @@ jobs:
           echo "=== which cc / cc --version ==="
           which cc || true
           /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc --version || true
-          echo "=== GMP config.log ==="
+          echo "=== GMP config.log (full, with conftest details) ==="
           CFG=deps/build/arm64/dep_GMP-prefix/src/dep_GMP/config.log
-          if [ -f "$CFG" ]; then tail -200 "$CFG"; else echo "no config.log at $CFG"; fi
+          if [ -f "$CFG" ]; then
+            wc -l "$CFG"
+            grep -nE "conftest|error:|warning:|fatal|cannot|undefined|gmp_compile_test|configure:[0-9]+:" "$CFG" | head -200
+            echo "---- first 600 lines ----"
+            head -600 "$CFG"
+          else
+            echo "no config.log at $CFG"
+          fi
       
       - name: Install tools for build
         run: |
