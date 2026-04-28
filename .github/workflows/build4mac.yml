@@ -193,6 +193,12 @@ jobs:
         if: steps.cache_deps.outputs.cache-hit != 'true'
         working-directory: ${{ github.workspace }}
         run: |
+          # Explicitly set SDKROOT so autotools-based deps (e.g. GMP)
+          # can find libSystem at link time. Xcode 15's new linker fails
+          # with "ld: library 'System' not found" otherwise.
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "SDKROOT=$SDKROOT"
+          ls -la "$(dirname "$SDKROOT")"
           ./build_release_macos.sh -dx -a arm64 -1
           cd "${{ github.workspace }}/deps/build/arm64"
           find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +
@@ -235,6 +241,7 @@ jobs:
       - name: Build OrcaSlicer
         working-directory: ${{ github.workspace }}
         run: |
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
           ./build_release_macos.sh -s -n -x -a arm64 -1
 
       - name: Sign app and notarize
