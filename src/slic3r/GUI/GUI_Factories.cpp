@@ -777,17 +777,37 @@ wxMenuItem* MenuFactory::append_menu_item_change_type(wxMenu* menu)
 
         // Update checkmark dynamically when menu is shown - check all selected volumes
         m_parent->Bind(wxEVT_UPDATE_UI, [type = info.type](wxUpdateUIEvent& evt) {
+            auto model = obj_list()->GetModel();
+            auto objs  = obj_list()->objects();
             bool has_type = false;
             wxDataViewItemArray sels;
             obj_list()->GetSelections(sels);
             for (auto item : sels) {
-                ModelVolumeType vol_type = obj_list()->GetModel()->GetVolumeType(item);
+                ModelVolumeType vol_type = model->GetVolumeType(item);
                 if (vol_type == type) {
                     has_type = true;
                     break;
                 }
             }
             evt.Check(has_type);
+
+            // ORCA Fix crash caused by SVG/TEXT volumes cant be Support Enforcer/Blocker type
+            for (auto item : sels) {
+                if (model->GetItemType(item) == itVolume){
+                    auto vol_idx = model->GetVolumeIdByItem(item);
+                    auto obj_idx = model->GetObjectIdByItem(item);
+                    if (vol_idx < 0 || obj_idx < 0)
+                        continue;
+
+                    auto vol = (*objs)[obj_idx]->volumes[vol_idx];
+
+                    // disable Support Enforcer/Blocker if selection contains svg or text
+                    if (vol != nullptr && (vol->is_svg() || vol->is_text()) && (type == ModelVolumeType::SUPPORT_BLOCKER || type == ModelVolumeType::SUPPORT_ENFORCER)){
+                        evt.Enable(false);
+                        break;
+                    }
+                }
+            }
         }, item->GetId());
     }
 
@@ -827,7 +847,7 @@ void MenuFactory::append_menu_item_fill_bed(wxMenu *menu)
 wxMenuItem* MenuFactory::append_menu_item_printable(wxMenu* menu)
 {
     // BBS: to be checked
-    wxMenuItem* menu_item_printable = append_menu_check_item(menu, wxID_ANY, _L("Printable"), "",
+    wxMenuItem* menu_item_printable = append_menu_check_item(menu, wxID_ANY, _L("Printable") + "\t" + "V", "",
         [](wxCommandEvent&) { obj_list()->toggle_printable_state(); }, menu);
 
     m_parent->Bind(wxEVT_UPDATE_UI, [](wxUpdateUIEvent& evt) {
@@ -2222,8 +2242,7 @@ void MenuFactory::append_menu_item_set_printable(wxMenu* menu)
         }
     }
 
-    wxString menu_text = _L("Printable");
-    wxMenuItem* menu_item_set_printable = append_menu_check_item(menu, wxID_ANY, menu_text, "", [this, all_printable](wxCommandEvent&) {
+    wxMenuItem* menu_item_set_printable = append_menu_check_item(menu, wxID_ANY, _L("Printable") + "\t" + "V", "", [this, all_printable](wxCommandEvent&) {
         Selection& selection = plater()->canvas3D()->get_selection();
         selection.set_printable(!all_printable);
         }, menu);
