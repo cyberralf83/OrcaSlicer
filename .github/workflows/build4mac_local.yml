@@ -255,6 +255,12 @@ jobs:
           ls -la "$(dirname "$SDKROOT")"
           ./build_release_macos.sh -dx -a arm64 -1
           cd "${{ github.workspace }}/deps/build/arm64"
+          # Spotlight/Finder can race the cleanup by writing .DS_Store into
+          # the dirs we're deleting, producing "Directory not empty" errors.
+          # Sweep .DS_Store first and retry once.
+          find . -name .DS_Store -delete 2>/dev/null || true
+          find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} + 2>/dev/null || true
+          find . -name .DS_Store -delete 2>/dev/null || true
           find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +
           brew install zstd
 
