@@ -239,7 +239,9 @@ jobs:
         run: |
           brew install automake texinfo libtool
           brew list
-          brew uninstall --ignore-dependencies zstd
+          if brew list --formula zstd &>/dev/null; then
+            brew uninstall --ignore-dependencies zstd
+          fi
       
       - name: Build dependencies
         if: steps.cache_deps.outputs.cache-hit != 'true'
