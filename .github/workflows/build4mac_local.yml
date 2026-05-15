@@ -1,0 +1,445 @@
+name: Build Mac ARM64 (Local Self-Hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner override (auto = probe for self-hosted macOS ARM64, fall back to macos-14)'
+        type: choice
+        required: false
+        default: 'auto'
+        options:
+          - auto
+          - self-hosted
+          - macos-14
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  pick-runner:
+    name: Pick build runner
+    runs-on: ubuntu-latest
+    outputs:
+      labels: ${{ steps.check.outputs.labels }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          RUNNER_OVERRIDE: ${{ inputs.runner }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          case "${RUNNER_OVERRIDE:-auto}" in
+            self-hosted)
+              echo 'labels=["self-hosted","macOS","ARM64"]' >> "$GITHUB_OUTPUT"
+              echo "Manual override: self-hosted"
+              exit 0
+              ;;
+            macos-14)
+              echo 'labels=["macos-14"]' >> "$GITHUB_OUTPUT"
+              echo "Manual override: macos-14"
+              exit 0
+              ;;
+          esac
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo 'labels=["macos-14"]' >> "$GITHUB_OUTPUT"
+            echo "PAT_TOKEN not set — falling back to macos-14"
+            exit 0
+          fi
+          # Probe the repo's runners API for an online, idle self-hosted Mac ARM64.
+          # Short timeout so this never adds more than ~10s when no SH runner exists.
+          ONLINE=$(timeout 10s gh api "repos/${REPO}/actions/runners" --jq \
+            '[.runners[] | select(.status=="online" and .busy==false and ([.labels[].name] | contains(["self-hosted","macOS","ARM64"])))] | length' \
+            2>/dev/null || echo "")
+          if [ -n "$ONLINE" ] && [ "$ONLINE" -gt 0 ] 2>/dev/null; then
+            echo 'labels=["self-hosted","macOS","ARM64"]' >> "$GITHUB_OUTPUT"
+            echo "Self-hosted macOS ARM64 runners online and idle: $ONLINE — using self-hosted"
+          else
+            echo 'labels=["macos-14"]' >> "$GITHUB_OUTPUT"
+            echo "No idle self-hosted macOS ARM64 runners — falling back to macos-14"
+          fi
+
+  build_mac_arm64:
+    name: Build Mac ARM64
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.labels) }}
+    permissions:
+      contents: write
+    env:
+      date:
+      ver:
+      ver_pure:
+    
+    steps:
+      - name: Validate PAT token secret
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "$PAT_TOKEN" ]; then
+            echo "::error::PAT_TOKEN secret is not set. Create a PAT with 'repo' and 'workflow' scopes and add it as PAT_TOKEN in repository secrets."
+            echo "Repository secrets: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+
+      - name: Checkout nightly-builds-with-bc branch
+        uses: actions/checkout@v5
+        with:
+          ref: nightly-builds-with-bc
+          fetch-depth: 0
+          lfs: 'true'
+          token: ${{ secrets.PAT_TOKEN }}
+          
+      - name: Fetch and merge upstream nightly-builds
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -x  # Enable command echoing
+
+          echo "=== Configuring Git user ==="
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "=== Configuring Git remote with PAT ==="
+          # First, show the current remote URL (will be sanitized in logs)
+          echo "Current origin URL:"
+          git remote get-url origin
+
+          # Remove the trailing .git if it exists in the repository name
+          REPO_URL="https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}"
+
+          # Set the new URL with PAT token (without .git extension to match checkout)
+          git remote set-url origin "${REPO_URL}"
+
+          # Verify it was set (GitHub Actions will automatically sanitize the token in logs)
+          echo "Updated origin URL (token will be hidden):"
+          git remote get-url origin
+
+          # Configure git credential helper to use the token stored in memory
+          git config --local --unset-all credential.helper || true
+          git config --local credential.helper '!f() { echo "username=x-access-token"; echo "password=${PAT_TOKEN}"; }; f'
+
+          echo "=== Adding upstream remote ==="
+          git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
+
+          echo "=== Fetching upstream nightly-builds tag ==="
+          git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
+
+          echo "=== Getting upstream SHA ==="
+          UPSTREAM_SHA=$(git rev-parse upstream-nightly)
+          echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
+
+          echo "=== Checking if already merged ==="
+          if git merge-base --is-ancestor ${UPSTREAM_SHA} HEAD; then
+            echo "Already up to date with upstream"
+          else
+            echo "=== Attempting merge ==="
+            if git merge ${UPSTREAM_SHA} --no-commit --no-ff; then
+              echo "=== Clean merge detected - committing ==="
+              git commit -m "Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"
+
+              echo "=== Pushing to nightly-builds-with-bc ==="
+              git push origin nightly-builds-with-bc
+              echo "Merge successful"
+            else
+              echo "=== Merge conflicts detected ==="
+
+              echo "=== Getting list of conflicted files ==="
+              CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
+              echo "Conflicted files:"
+              echo "$CONFLICTED_FILES"
+
+              echo "=== Resolving conflicts by keeping our versions ==="
+              git diff --name-only --diff-filter=U | while read file; do
+                echo "Keeping our version of: $file"
+                git checkout --ours "$file"
+                git add "$file"
+              done
+
+              echo "=== Committing partial merge ==="
+              git commit -m "Partial merge of upstream nightly-builds (${UPSTREAM_SHA:0:8}) - conflicts pending"
+              PARTIAL_MERGE_SHA=$(git rev-parse HEAD)
+              echo "Partial merge SHA: ${PARTIAL_MERGE_SHA}"
+
+              echo "=== Pushing partial merge to nightly-builds-with-bc ==="
+              git push origin nightly-builds-with-bc
+
+              echo "=== Creating conflict branch for PR ==="
+              CONFLICT_BRANCH="merge-conflict-$(date +%Y%m%d-%H%M%S)"
+              echo "Conflict branch name: ${CONFLICT_BRANCH}"
+              git checkout -b "$CONFLICT_BRANCH" HEAD~1
+
+              echo "=== Re-attempting merge to show conflicts ==="
+              git merge ${UPSTREAM_SHA} --no-commit --no-ff || true
+
+              echo "=== Committing conflicts for PR ==="
+              git commit -a -m "WIP: Merge conflicts from upstream nightly-builds (${UPSTREAM_SHA:0:8})"
+
+              echo "=== Pushing conflict branch ==="
+              git push origin "$CONFLICT_BRANCH"
+
+              echo "=== Switching back to nightly-builds-with-bc ==="
+              git checkout nightly-builds-with-bc
+
+              echo "=== Creating PR for conflict resolution ==="
+              gh pr create \
+                --base nightly-builds-with-bc \
+                --head "$CONFLICT_BRANCH" \
+                --title "Resolve merge conflicts from upstream nightly-builds ($(date +%Y-%m-%d))" \
+                --body "Automated merge from upstream encountered conflicts in the following files:
+
+              \`\`\`
+              $CONFLICTED_FILES
+              \`\`\`
+
+              **Upstream SHA:** ${UPSTREAM_SHA}
+
+              The nightly-builds-with-bc branch has been updated with all non-conflicting changes. This PR contains the conflicted files for manual resolution.
+
+              Please review and resolve the conflicts, then merge this PR." || echo "PR creation failed - may already exist"
+
+              echo "Continuing build with non-conflicting changes applied"
+            fi
+          fi
+
+          set +x  # Disable command echoing
+
+      - name: Get date and version
+        run: |
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          ver="V${ver_pure}-nightly"
+          echo "ver=$ver" >> $GITHUB_ENV
+          echo "ver_pure=$ver_pure" >> $GITHUB_ENV
+          echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
+        shell: bash
+      
+      # Cache handling
+      - name: Generate cache key
+        id: cache_key
+        run: |
+          echo "cache-key=macos-14-cache-orcaslicer_deps-build-${{ hashFiles('deps/**') }}" >> $GITHUB_OUTPUT
+          echo "cache-path=${{ github.workspace }}/deps/build" >> $GITHUB_OUTPUT
+      
+      - name: Load cached deps
+        id: cache_deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.cache_key.outputs.cache-path }}
+          key: ${{ steps.cache_key.outputs.cache-key }}
+      
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"  # use most recent 3.28.x version
+      
+      # Build dependencies if cache miss
+      - name: Install build tools
+        if: steps.cache_deps.outputs.cache-hit != 'true'
+        run: |
+          brew install automake texinfo libtool
+          brew list
+          brew uninstall --ignore-dependencies zstd
+      
+      - name: Build dependencies
+        if: steps.cache_deps.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Explicitly set SDKROOT so autotools-based deps (e.g. GMP)
+          # can find libSystem at link time. Xcode 15's new linker fails
+          # with "ld: library 'System' not found" otherwise.
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "SDKROOT=$SDKROOT"
+          ls -la "$(dirname "$SDKROOT")"
+          ./build_release_macos.sh -dx -a arm64 -1
+          cd "${{ github.workspace }}/deps/build/arm64"
+          find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +
+          brew install zstd
+
+      - name: Dump GMP config.log on failure
+        if: failure() && steps.cache_deps.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "=== xcode-select -p ==="
+          xcode-select -p || true
+          echo "=== xcrun --show-sdk-path ==="
+          xcrun --show-sdk-path || true
+          echo "=== which cc / cc --version ==="
+          which cc || true
+          /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc --version || true
+          echo "=== GMP config.log (full, with conftest details) ==="
+          CFG=deps/build/arm64/dep_GMP-prefix/src/dep_GMP/config.log
+          if [ -f "$CFG" ]; then
+            wc -l "$CFG"
+            grep -nE "conftest|error:|warning:|fatal|cannot|undefined|gmp_compile_test|configure:[0-9]+:" "$CFG" | head -200
+            echo "---- first 600 lines ----"
+            head -600 "$CFG"
+          else
+            echo "no config.log at $CFG"
+          fi
+      
+      - name: Install tools for build
+        run: |
+          brew install libtool
+          mkdir -p ${{ github.workspace }}/deps/build
+
+      - name: Free disk space
+        # Cloud macos-14 ships with 7 Xcodes (~50–60 GB total); the build needs space.
+        # Skip on self-hosted so we don't delete the runner Mac's Xcode installs or wipe its simulator caches.
+        if: runner.environment == 'github-hosted'
+        run: |
+          df -hI /dev/disk3s1s1
+          sudo find /Applications -maxdepth 1 -type d -name "Xcode_*.app" ! -name "Xcode_15.4.app" -exec rm -rf {} +
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
+          df -hI /dev/disk3s1s1
+
+      - name: Build OrcaSlicer
+        working-directory: ${{ github.workspace }}
+        run: |
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          ./build_release_macos.sh -s -n -x -a arm64 -1
+
+      - name: Sign app and notarize
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+        run: |
+          # Set up certificate and keychain
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+          security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+
+          # Sign the apps
+          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app
+
+          # Sign OrcaSlicer_profile_validator.app if it exists
+          if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
+            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app
+          fi
+
+          # Create main OrcaSlicer DMG
+          mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg
+          rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/*
+          cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/
+          ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/Applications
+
+          # Ensure all file operations are complete
+          sync
+          sleep 2
+
+          hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+          # Create separate OrcaSlicer_profile_validator DMG if the app exists
+          if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
+            mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg
+            rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/*
+            cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/
+            ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/Applications
+
+            # Ensure all file operations are complete
+            sync
+            sleep 2
+
+            hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          fi
+
+          # Notarize main DMG
+          xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
+          xcrun notarytool submit "OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+          xcrun stapler staple OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+          # Notarize profile validator DMG if it exists
+          if [ -f "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" ]; then
+            xcrun notarytool submit "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+            xcrun stapler staple OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: OrcaSlicer_Mac_arm64_${{ env.ver }}
+          path: ${{ github.workspace }}/OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+      - name: Upload profile validator DMG
+        uses: actions/upload-artifact@v5
+        with:
+          name: OrcaSlicer_Mac_arm64_profile_validator_${{ env.ver }}
+          path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          if-no-files-found: ignore
+
+  release:
+    name: Deploy to Release
+    needs: [build_mac_arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout nightly-builds-with-bc
+        uses: actions/checkout@v5
+        with:
+          ref: nightly-builds-with-bc
+      
+      - name: Get version and SHA
+        id: get_version
+        run: |
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          echo "version=${ver_pure}" >> $GITHUB_OUTPUT
+          git_sha=$(git rev-parse HEAD)
+          echo "sha=${git_sha}" >> $GITHUB_OUTPUT
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: OrcaSlicer_Mac_arm64_*
+          merge-multiple: true
+          path: ./artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          echo "Contents of artifacts directory:"
+          ls -la ./artifacts/
+          echo "Looking for DMG files:"
+          find ./artifacts -name "*.dmg" -type f
+
+      - name: Delete old release and create new one
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete the existing release if it exists
+          echo "Checking for existing nightly-mac-arm64 release..."
+          if gh release view nightly-mac-arm64 2>/dev/null; then
+            echo "Deleting existing nightly-mac-arm64 release..."
+            gh release delete nightly-mac-arm64 --yes --cleanup-tag || true
+          fi
+
+          # Create fresh release with DMG files
+          echo "Creating new nightly-mac-arm64 release..."
+          gh release create nightly-mac-arm64 \
+            --title "Nightly Mac ARM64 Build" \
+            --latest \
+            --notes "Automated nightly build from nightly-builds-with-bc branch (synced with upstream)
+
+          **Version:** ${{ steps.get_version.outputs.version }}
+          **Branch SHA:** ${{ steps.get_version.outputs.sha }}
+
+          This build includes:
+          - Latest changes from upstream OrcaSlicer nightly-builds tag
+          - Custom modifications from nightly-builds-with-bc branch
+
+          Built for macOS (ARM64 only - Apple Silicon).
+
+          **Note:** These builds are signed and notarized by Apple. You can install and run them directly without any security warnings." \
+            ./artifacts/*.dmg
+
