@@ -1065,6 +1065,11 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,  interlocking_beam_layer_count))
     ((ConfigOptionInt,  interlocking_depth))
     ((ConfigOptionInt,  interlocking_boundary_avoidance))
+    ((ConfigOptionInt,  interlocking_boundary_avoidance_z))
+    ((ConfigOptionBool, interlocking_beam_bidirectional))
+    ((ConfigOptionInt,  interlocking_beam_skip_layers))
+    ((ConfigOptionInt,  interlocking_beam_group_count))
+    ((ConfigOptionInt,  interlocking_beam_gap))
 
     // Orca: internal use only
     ((ConfigOptionBool,  calib_flowrate_topinfill_special_order)) // ORCA: special flag for flow rate calibration

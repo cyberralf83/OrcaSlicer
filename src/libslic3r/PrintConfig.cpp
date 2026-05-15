@@ -4099,12 +4099,63 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionInt(2));
 
     def           = this->add("interlocking_boundary_avoidance", coInt);
-    def->label    = L("Interlocking boundary avoidance");
-    def->tooltip  = L("The distance from the outside of a model where interlocking structures will not be generated, measured in cells.");
+    def->label    = L("Interlocking boundary avoidance (XY)");
+    def->tooltip  = L("The distance from the side walls of a model where interlocking structures will not be generated, measured in cells.");
     def->min      = 0;
     def->category = L("Advanced");
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionInt(2));
+
+    def           = this->add("interlocking_boundary_avoidance_z", coInt);
+    def->label    = L("Interlocking boundary avoidance (Z)");
+    def->tooltip  = L("The distance from the top and bottom surfaces of a model where interlocking structures "
+                       "will not be generated, measured in cells. Controls vertical (Z-axis) avoidance independently "
+                       "from the horizontal (XY) boundary avoidance.");
+    def->min      = 0;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(2));
+
+    def           = this->add("interlocking_beam_bidirectional", coBool);
+    def->label    = L("Bidirectional beams");
+    def->tooltip  = L("When enabled, interlocking beams alternate between two perpendicular directions. "
+                       "When disabled, beams are generated in only one direction (the interlocking orientation angle). "
+                       "The alternating layers will have normal walls with no interlocking.");
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def           = this->add("interlocking_beam_skip_layers", coInt);
+    def->label    = L("Skip layers between cycles");
+    def->tooltip  = L("Number of normal layers (without interlocking) to insert between each interlocking cycle. "
+                       "Set to 0 for no gaps between cycles (default behavior).");
+    def->min      = 0;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def           = this->add("interlocking_beam_group_count", coInt);
+    def->label    = L("Beam group count");
+    def->tooltip  = L("Number of consecutive beam fingers to keep per group. Each finger is one beam width. "
+                       "Odd values are rounded up to the next even number internally (beams are paired). "
+                       "Set to 0 to disable density control. "
+                       "Both this and beam gap must be greater than 0 to enable density control.");
+    def->min      = 0;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def           = this->add("interlocking_beam_gap", coInt);
+    def->label    = L("Beam gap");
+    def->tooltip  = L("Number of beam finger widths to skip between groups. "
+                       "Odd values are rounded up to the next even number internally (beams are paired). "
+                       "Set to 0 for no gaps (all beams placed). "
+                       "Both this and beam group count must be greater than 0 to enable density control.");
+    def->min      = 0;
+    def->max      = 100;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
 
     // ORCA: special flag for flow rate calibration
     def           = this->add("calib_flowrate_topinfill_special_order", coBool);

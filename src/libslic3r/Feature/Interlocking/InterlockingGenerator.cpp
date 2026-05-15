@@ -5,6 +5,8 @@
 #include "libslic3r/ClipperUtils.hpp"
 #include "Layer.hpp"
 
+#include <algorithm>
+
 namespace std {
 template<> struct hash<Slic3r::GridPoint3>
 {
@@ -34,13 +36,24 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
     const float    rotation           = Geometry::deg2rad(config.interlocking_orientation.value);
     const coord_t  beam_layer_count   = config.interlocking_beam_layer_count;
     const int      interface_depth    = config.interlocking_depth;
-    const int      boundary_avoidance = config.interlocking_boundary_avoidance;
-    const coord_t  beam_width         = scaled(config.interlocking_beam_width.value);
+    const int      boundary_avoidance   = config.interlocking_boundary_avoidance;
+    const int      boundary_avoidance_z = config.interlocking_boundary_avoidance_z;
+    const coord_t  beam_width           = scaled(config.interlocking_beam_width.value);
+    const bool     bidirectional        = config.interlocking_beam_bidirectional;
+    const int      skip_layers          = config.interlocking_beam_skip_layers;
+    const int      beam_group_count     = config.interlocking_beam_group_count;
+    const int      beam_gap             = config.interlocking_beam_gap;
 
     const DilationKernel interface_dilation(GridPoint3(interface_depth, interface_depth, interface_depth), DilationKernel::Type::PRISM);
 
-    const bool           air_filtering = boundary_avoidance > 0;
-    const DilationKernel air_dilation(GridPoint3(boundary_avoidance, boundary_avoidance, boundary_avoidance), DilationKernel::Type::PRISM);
+    const bool           air_filtering = boundary_avoidance > 0 || boundary_avoidance_z > 0;
+    // Kernel dimensions must be >= 1 when air filtering is active, otherwise a zero
+    // dimension produces an empty kernel (zero loop iterations). Use 1 as the minimum
+    // so that axis effectively has no avoidance rather than disabling the entire kernel.
+    const DilationKernel air_dilation(GridPoint3(std::max(boundary_avoidance, 1),
+                                                 std::max(boundary_avoidance, 1),
+                                                 std::max(boundary_avoidance_z, 1)),
+                                      DilationKernel::Type::PRISM);
 
     const coord_t cell_width = beam_width + beam_width;
     const Vec3crd cell_size(cell_width, cell_width, 2 * beam_layer_count);
@@ -59,10 +72,25 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
             throw_on_cancel();
 
             InterlockingGenerator gen(*print_object, region_a_index, region_b_index, beam_width, boundary_avoidance, rotation, cell_size, beam_layer_count,
-                                      interface_dilation, air_dilation, air_filtering, throw_on_cancel);
+                                      interface_dilation, air_dilation, air_filtering, bidirectional, skip_layers,
+                                      beam_group_count, beam_gap, throw_on_cancel);
             gen.generateInterlockingStructure();
         }
     }
+}
+
+bool InterlockingGenerator::isActiveBeamLayer(size_t beam_layer_idx) const
+{
+    if (skip_layers <= 0)
+        return true;
+
+    // One cycle = 2 beam-layer groups (type 0 + type 1) + skip groups
+    // skip_groups = ceil(skip_layers / beam_layer_count)
+    size_t skip_groups  = (static_cast<size_t>(skip_layers) + static_cast<size_t>(beam_layer_count) - 1)
+                          / static_cast<size_t>(beam_layer_count);
+    size_t cycle_length = 2 + skip_groups;
+    size_t position     = beam_layer_idx % cycle_length;
+    return position < 2;
 }
 
 std::pair<ExPolygons, ExPolygons> InterlockingGenerator::growBorderAreasPerpendicular(const ExPolygons& a, const ExPolygons& b, const coord_t& detect) const
@@ -171,6 +199,17 @@ void InterlockingGenerator::generateInterlockingStructure() const
         }
 
         handleThinAreas(has_all_meshes);
+    }
+
+    // Pre-filter the full cell set (including interface extensions from dilation)
+    // so that orphaned dilated cells in gap zones are removed before beam generation.
+    if (beam_group_count > 0 && beam_gap > 0 && !has_all_meshes.empty()) {
+        auto filtered0 = filterCellsForAxis(has_all_meshes, 0);
+        if (bidirectional) {
+            auto filtered1 = filterCellsForAxis(has_all_meshes, 1);
+            filtered0.insert(filtered1.begin(), filtered1.end());
+        }
+        has_all_meshes = std::move(filtered0);
     }
 
     applyMicrostructureToOutlines(has_all_meshes, layer_regions);
@@ -291,6 +330,18 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
     structure_per_layer[0].resize(num_interlocking_layers);
     structure_per_layer[1].resize(num_interlocking_layers);
 
+    // Per-layer-type density filtering: a cell may pass for one beam direction
+    // but not the other, so we need separate filtered sets per axis.
+    const bool density_enabled = beam_group_count > 0 && beam_gap > 0;
+    std::unordered_set<GridPoint3> filtered_type0_storage, filtered_type1_storage;
+    if (density_enabled) {
+        filtered_type0_storage = filterCellsForAxis(cells, 0);
+        if (bidirectional)
+            filtered_type1_storage = filterCellsForAxis(cells, 1);
+    }
+    const auto& filtered_type0 = density_enabled ? filtered_type0_storage : cells;
+    const auto& filtered_type1 = density_enabled ? filtered_type1_storage : cells;
+
     // Only compute cell structure for half the layers, because since our beams are two layers high, every odd layer of the structure will
     // be the same as the layer below.
     for (const GridPoint3& grid_loc : cells) {
@@ -298,8 +349,23 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
         for (size_t mesh_idx = 0; mesh_idx < 2; mesh_idx++) {
             for (size_t layer_nr = bottom_corner.z(); layer_nr < bottom_corner.z() + cell_size.z() && layer_nr < max_layer_count;
                  layer_nr += beam_layer_count) {
-                ExPolygons areas_here = cell_area_per_mesh_per_layer[static_cast<size_t>(layer_nr / beam_layer_count) %
-                                                                cell_area_per_mesh_per_layer.size()][mesh_idx];
+                size_t beam_layer_idx = static_cast<size_t>(layer_nr / beam_layer_count);
+                if (!isActiveBeamLayer(beam_layer_idx))
+                    continue;
+
+                size_t layer_type = beam_layer_idx % cell_area_per_mesh_per_layer.size();
+
+                // Skip perpendicular layers in unidirectional mode
+                if (!bidirectional && layer_type == 1)
+                    continue;
+
+                // Density filter: check against the filtered set for this layer type
+                if (layer_type == 0 && !filtered_type0.count(grid_loc))
+                    continue;
+                if (layer_type == 1 && !filtered_type1.count(grid_loc))
+                    continue;
+
+                ExPolygons areas_here = cell_area_per_mesh_per_layer[layer_type][mesh_idx];
                 for (auto & here : areas_here) {
                     here.translate(bottom_corner.x(), bottom_corner.y());
                 }
@@ -320,6 +386,13 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
         const size_t region = (region_idx == 0) ? region_a_index : region_b_index;
         for (size_t layer_nr = 0; layer_nr < max_layer_count; layer_nr++) {
             throw_on_cancel();
+            size_t beam_layer_idx = layer_nr / static_cast<size_t>(beam_layer_count);
+            if (!isActiveBeamLayer(beam_layer_idx))
+                continue;
+            // Skip perpendicular layers in unidirectional mode
+            if (!bidirectional && (beam_layer_idx % 2) == 1)
+                continue;
+
             ExPolygons layer_outlines = layer_regions[layer_nr];
             expolygons_rotate(layer_outlines, unapply_rotation);
 
@@ -334,6 +407,40 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
                        , stInternal);
         }
     }
+}
+
+std::unordered_set<GridPoint3> InterlockingGenerator::filterCellsForAxis(
+    const std::unordered_set<GridPoint3>& cells, int axis) const
+{
+    // Beam density filtering using a repeating stripe pattern perpendicular to beams.
+    //
+    // Each grid cell spans 2 beam widths in the perpendicular direction (one finger
+    // per mesh), so the user-facing beam_group_count and beam_gap values (in finger
+    // units) are converted to cell units via ceiling division.
+    //
+    // For type-0 beams (axis==0), beams run along grid-X; filter on grid-Y.
+    // For type-1 beams (axis==1), beams run along grid-Y; filter on grid-X.
+
+    int cell_M = (beam_group_count + 1) / 2;  // fingers → cells (ceiling)
+    int cell_G = (beam_gap + 1) / 2;
+    int stride = cell_M + cell_G;
+
+    coord_t min_perp = std::numeric_limits<coord_t>::max();
+    for (const auto& cell : cells) {
+        coord_t perp = (axis == 0) ? cell.y() : cell.x();
+        if (perp < min_perp) min_perp = perp;
+    }
+
+    std::unordered_set<GridPoint3> result;
+    for (const auto& cell : cells) {
+        coord_t perp = (axis == 0) ? cell.y() : cell.x();
+        int pos_in_stride = ((int)(perp - min_perp)) % stride;
+        if (pos_in_stride < 0) pos_in_stride += stride;
+        if (pos_in_stride < cell_M)
+            result.insert(cell);
+    }
+
+    return result;
 }
 
 } // namespace Slic3r

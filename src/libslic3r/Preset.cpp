@@ -1260,7 +1260,12 @@ static std::vector<std::string> s_Preset_print_options{
     "interlocking_beam_layer_count",
     "interlocking_depth",
     "interlocking_boundary_avoidance",
+    "interlocking_boundary_avoidance_z",
     "interlocking_beam_width",
+    "interlocking_beam_bidirectional",
+    "interlocking_beam_skip_layers",
+    "interlocking_beam_group_count",
+    "interlocking_beam_gap",
     "calib_flowrate_topinfill_special_order",
     // Z Anti-Aliasing (ZAA)
     "zaa_enabled",
@@ -1268,6 +1273,7 @@ static std::vector<std::string> s_Preset_print_options{
     "zaa_dont_alternate_fill_direction",
     "zaa_min_z",
     "ironing_expansion",
+
 };
 
 static std::vector<std::string> s_Preset_filament_options {/*"filament_colour", */ "default_filament_colour", "required_nozzle_HRC", "filament_diameter", "pellet_flow_coefficient", "volumetric_speed_coefficients", "filament_type",

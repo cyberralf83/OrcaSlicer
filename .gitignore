@@ -46,3 +46,4 @@ test.js
 internal_docs/
 *.flatpak
 /flatpak-repo/
+.claude/worktrees/beam-interlocking-enhancements/

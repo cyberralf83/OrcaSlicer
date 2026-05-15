@@ -953,6 +953,11 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("interlocking_beam_layer_count", use_beam_interlocking);
     toggle_line("interlocking_depth", use_beam_interlocking);
     toggle_line("interlocking_boundary_avoidance", use_beam_interlocking);
+    toggle_line("interlocking_boundary_avoidance_z", use_beam_interlocking);
+    toggle_line("interlocking_beam_bidirectional", use_beam_interlocking);
+    toggle_line("interlocking_beam_skip_layers", use_beam_interlocking);
+    toggle_line("interlocking_beam_group_count", use_beam_interlocking);
+    toggle_line("interlocking_beam_gap", use_beam_interlocking);
 
     bool lattice_options = config->opt_enum<InfillPattern>("sparse_infill_pattern") == InfillPattern::ipLateralLattice;
     for (auto el : { "lateral_lattice_angle_1", "lateral_lattice_angle_2"})
