@@ -376,6 +376,23 @@ jobs:
           security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           echo "Setting keychain as primary (prepended to original list)..."
           security list-keychains -d user -s "$KEYCHAIN_PATH" "${ORIG_KCS[@]}"
+
+          # codesign needs the full chain (leaf -> intermediate -> root).
+          # Cloud runners ship Xcode which installs Apple's intermediates into
+          # System.keychain; a bare Command-Line-Tools Mac does not have them.
+          # Download Apple's Developer ID intermediates (both G1 and G2 since
+          # leaf certs in the wild are signed by either) into the temp keychain.
+          INTERMEDIATES_DIR="$RUNNER_TEMP/apple-intermediates"
+          mkdir -p "$INTERMEDIATES_DIR"
+          for cert_url in \
+            https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+            https://www.apple.com/certificateauthority/DeveloperIDCA.cer; do
+            fname=$(basename "$cert_url")
+            echo "Fetching $fname..."
+            curl -fsSL -o "$INTERMEDIATES_DIR/$fname" "$cert_url"
+            echo "Importing $fname into temp keychain..."
+            security import "$INTERMEDIATES_DIR/$fname" -k "$KEYCHAIN_PATH" -A -t cert -f x509
+          done
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
 
           # Sign the apps
