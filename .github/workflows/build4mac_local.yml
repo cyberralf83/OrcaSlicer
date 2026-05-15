@@ -315,7 +315,25 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
         run: |
-          set -x
+          # Mirror all stdout/stderr to a local file on the runner so the
+          # failure trace survives even when API log download requires admin.
+          # NOTE: do not enable 'set -x' here — it would expand secret values
+          # into the local file (GitHub only redacts cloud-uploaded logs).
+          DEBUG_LOG=/tmp/orca-sign-debug.log
+          : > "$DEBUG_LOG"
+          exec > >(tee -a "$DEBUG_LOG") 2>&1
+          echo "=== sign step started: $(date -u +%FT%TZ) ==="
+          # ERR trap identifies the failing line/command without printing secrets.
+          trap 'rc=$?; echo "ERR at line $LINENO (rc=$rc): $BASH_COMMAND"' ERR
+
+          # Sanity checks (presence only, never values).
+          echo "Pre-checks:"
+          for v in BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD CERTIFICATE_ID RUNNER_TEMP; do
+            eval "val=\$$v"
+            if [ -n "$val" ]; then echo "  $v: SET (${#val} chars)"; else echo "  $v: EMPTY"; fi
+          done
+          echo "  OrcaSlicer.app present: $([ -d "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app" ] && echo yes || echo NO)"
+          echo "  macOS: $(sw_vers -productVersion 2>/dev/null) on $(uname -m)"
 
           # Capture user keychain search list so we can restore on exit.
           # 'security list-keychain -d user -s' REPLACES the list, and a failure
