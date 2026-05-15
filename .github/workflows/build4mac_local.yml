@@ -315,15 +315,39 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
         run: |
-          # Set up certificate and keychain
+          set -x
+
+          # Capture user keychain search list so we can restore on exit.
+          # 'security list-keychain -d user -s' REPLACES the list, and a failure
+          # mid-step would leave the runner Mac unable to find login.keychain.
+          ORIG_USER_KEYCHAINS=$(security list-keychains -d user | sed -E 's/^[[:space:]]*"(.*)"$/\1/' | tr '\n' ' ')
+          echo "Original user keychain search list: $ORIG_USER_KEYCHAINS"
+
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Restore keychain list on any exit so we never strand the host.
+          restore_keychains() {
+            set +e
+            if [ -n "$ORIG_USER_KEYCHAINS" ]; then
+              security list-keychains -d user -s $ORIG_USER_KEYCHAINS
+            fi
+            if [ -f "$KEYCHAIN_PATH" ]; then
+              security delete-keychain "$KEYCHAIN_PATH" || true
+            fi
+          }
+          trap restore_keychains EXIT
+
+          # Clear any leftover keychain file from a prior failed run.
+          [ -f "$KEYCHAIN_PATH" ] && security delete-keychain "$KEYCHAIN_PATH"
+
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
-          security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
-          security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          # Prepend new keychain to existing list rather than replace
+          security list-keychains -d user -s $KEYCHAIN_PATH $ORIG_USER_KEYCHAINS
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
 
           # Sign the apps
