@@ -378,10 +378,6 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" "${ORIG_KCS[@]}"
 
           # codesign needs the full chain (leaf -> intermediate -> root).
-          # Cloud runners ship Xcode which installs Apple's intermediates into
-          # System.keychain; a bare Command-Line-Tools Mac does not have them.
-          # Download Apple's Developer ID intermediates (both G1 and G2 since
-          # leaf certs in the wild are signed by either) into the temp keychain.
           INTERMEDIATES_DIR="$RUNNER_TEMP/apple-intermediates"
           mkdir -p "$INTERMEDIATES_DIR"
           for cert_url in \
@@ -391,8 +387,27 @@ jobs:
             echo "Fetching $fname..."
             curl -fsSL -o "$INTERMEDIATES_DIR/$fname" "$cert_url"
             echo "Importing $fname into temp keychain..."
-            security import "$INTERMEDIATES_DIR/$fname" -k "$KEYCHAIN_PATH" -A -t cert -f x509
+            security import "$INTERMEDIATES_DIR/$fname" -k "$KEYCHAIN_PATH" -A -t cert -f x509 || true
+            # add-certificates is the canonical command for adding CA certs and
+            # may register them more reliably than 'import' on recent macOS.
+            security add-certificates -k "$KEYCHAIN_PATH" "$INTERMEDIATES_DIR/$fname" 2>&1 || true
           done
+
+          echo "--- Certs in temp keychain ---"
+          security find-certificate -a "$KEYCHAIN_PATH" | grep -E "labl|alis" | sort -u
+          echo "--- Verify leaf cert chain ---"
+          # Find the imported leaf cert (Developer ID Application) and write to file
+          LEAF_PEM="$RUNNER_TEMP/leaf.pem"
+          security find-certificate -c "Developer ID Application" -p "$KEYCHAIN_PATH" > "$LEAF_PEM" 2>&1 || true
+          if [ -s "$LEAF_PEM" ]; then
+            echo "Running: security verify-cert -k $KEYCHAIN_PATH -c $LEAF_PEM -p codeSign"
+            security verify-cert -k "$KEYCHAIN_PATH" -c "$LEAF_PEM" -p codeSign 2>&1 || echo "verify-cert returned non-zero"
+          else
+            echo "No leaf cert found in temp keychain (find-certificate empty)"
+          fi
+          echo "--- Identities visible to codesign ---"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+          echo "--- End diagnostics ---"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
 
           # Sign the apps
