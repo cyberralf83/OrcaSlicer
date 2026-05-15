@@ -222,9 +222,11 @@ jobs:
           echo "cache-key=macos-14-cache-orcaslicer_deps-build-${{ hashFiles('deps/**') }}" >> $GITHUB_OUTPUT
           echo "cache-path=${{ github.workspace }}/deps/build" >> $GITHUB_OUTPUT
       
+      # Split restore/save so we can save the cache even when later steps fail
+      # (default 'actions/cache' post step is gated on success()).
       - name: Load cached deps
         id: cache_deps
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ steps.cache_key.outputs.cache-path }}
           key: ${{ steps.cache_key.outputs.cache-key }}
@@ -286,6 +288,14 @@ jobs:
             echo "no config.log at $CFG"
           fi
       
+      # Save the rebuilt deps cache even if a later step (sign/notarize) fails.
+      - name: Save deps cache
+        if: always() && steps.cache_deps.outputs.cache-hit != 'true' && steps.cache_key.outputs.cache-key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.cache_key.outputs.cache-path }}
+          key: ${{ steps.cache_key.outputs.cache-key }}
+
       - name: Install tools for build
         run: |
           brew install libtool
