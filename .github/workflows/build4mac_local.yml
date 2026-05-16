@@ -388,9 +388,12 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" "${ORIG_KCS[@]}"
 
           # codesign needs the full chain (leaf -> intermediate -> root).
+          # With --keychain, only the named keychain is searched for chain
+          # certs (man codesign), so we need to include the Apple Root CA too.
           INTERMEDIATES_DIR="$RUNNER_TEMP/apple-intermediates"
           mkdir -p "$INTERMEDIATES_DIR"
           for cert_url in \
+            https://www.apple.com/appleca/AppleIncRootCertificate.cer \
             https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
             https://www.apple.com/certificateauthority/DeveloperIDCA.cer; do
             fname=$(basename "$cert_url")
@@ -398,10 +401,17 @@ jobs:
             curl -fsSL -o "$INTERMEDIATES_DIR/$fname" "$cert_url"
             echo "Importing $fname into temp keychain..."
             security import "$INTERMEDIATES_DIR/$fname" -k "$KEYCHAIN_PATH" -A -t cert -f x509 || true
-            # add-certificates is the canonical command for adding CA certs and
-            # may register them more reliably than 'import' on recent macOS.
             security add-certificates -k "$KEYCHAIN_PATH" "$INTERMEDIATES_DIR/$fname" 2>&1 || true
           done
+
+          # codesign on Tahoe seems to ignore System Roots when using a custom
+          # keychain. Explicitly mark the Apple Root as a trust anchor in our
+          # keychain. -k <keychain> scopes the trust setting to that keychain
+          # only (no host-level admin trust override).
+          echo "Marking Apple Root CA as trust anchor in temp keychain..."
+          security add-trusted-cert -r trustRoot -k "$KEYCHAIN_PATH" \
+            "$INTERMEDIATES_DIR/AppleIncRootCertificate.cer" 2>&1 || \
+            echo "  add-trusted-cert returned non-zero (may be benign if not supported)"
 
           echo "--- Certs in temp keychain ---"
           security find-certificate -a "$KEYCHAIN_PATH" | grep -E "labl|alis" | sort -u
