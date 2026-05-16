@@ -404,14 +404,11 @@ jobs:
             security add-certificates -k "$KEYCHAIN_PATH" "$INTERMEDIATES_DIR/$fname" 2>&1 || true
           done
 
-          # codesign on Tahoe seems to ignore System Roots when using a custom
-          # keychain. Explicitly mark the Apple Root as a trust anchor in our
-          # keychain. -k <keychain> scopes the trust setting to that keychain
-          # only (no host-level admin trust override).
-          echo "Marking Apple Root CA as trust anchor in temp keychain..."
-          security add-trusted-cert -r trustRoot -k "$KEYCHAIN_PATH" \
-            "$INTERMEDIATES_DIR/AppleIncRootCertificate.cer" 2>&1 || \
-            echo "  add-trusted-cert returned non-zero (may be benign if not supported)"
+          # NOTE: 'security add-trusted-cert' prompts for interactive admin
+          # authorization on macOS and hangs forever on a non-interactive
+          # runner. Apple Root CA is already in System Roots, and we now have
+          # it duplicated in the temp keychain for chain-building purposes —
+          # that should be sufficient without explicit trust override.
 
           echo "--- Certs in temp keychain ---"
           security find-certificate -a "$KEYCHAIN_PATH" | grep -E "labl|alis" | sort -u
