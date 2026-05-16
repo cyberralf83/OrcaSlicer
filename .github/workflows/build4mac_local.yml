@@ -464,13 +464,26 @@ jobs:
           fi
 
           # Notarize main DMG
-          xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
-          xcrun notarytool submit "OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+          # Disable ERR trap around xcrun so the trap doesn't print the
+          # expanded command (which embeds the app-specific password) to the
+          # local /tmp debug log on failure.
+          trap - ERR
+          # Store credentials in our temp keychain (the default is login.keychain
+          # which on a non-interactive runner can't be unlocked → "User
+          # interaction is not allowed.").
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" \
+            --team-id "${{ secrets.TEAM_ID }}" \
+            --password "${{ secrets.APP_PWD }}" \
+            --keychain "$KEYCHAIN_PATH"
+          xcrun notarytool submit "OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg" \
+            --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
           xcrun stapler staple OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
 
           # Notarize profile validator DMG if it exists
           if [ -f "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" ]; then
-            xcrun notarytool submit "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+            xcrun notarytool submit "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" \
+              --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
             xcrun stapler staple OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
           fi
 
