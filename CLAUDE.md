@@ -25,13 +25,51 @@ Adds a "Send to BC" button for BBL printers that exports the sliced file and ope
 
 Flow: Slice -> "Send to BC" button -> export 3MF -> URL-encode path/name -> open `bambu-connect://` URL scheme
 
-### CI Workflow
+### CI Workflows
 
-`.github/workflows/build4mac.yml` - Custom workflow that:
+Two macOS workflows, both producing signed + notarized DMGs published to the `nightly-mac-arm64` GitHub release:
+
+**`.github/workflows/build4mac.yml`** — cloud-only build, the source of truth.
 - Runs on schedule (every 4 days) or manual trigger
 - Fetches and merges upstream `nightly-builds` tag into `nightly-builds-with-bc` branch
-- Builds macOS ARM64 using `build_release_macos.sh`
-- Creates a DMG and publishes a GitHub release with the `nightly-mac-arm64` tag
+- Builds macOS ARM64 on `macos-14` using `build_release_macos.sh`
+- Creates a DMG and publishes the release
+
+**`.github/workflows/build4mac_local.yml`** — manual trigger only; routes to a self-hosted Mac ARM64 runner if one is online + idle, otherwise falls back to `macos-14`. Same final output as the cloud workflow. The `pick-runner` job probes `repos/cyberralf83/OrcaSlicer/actions/runners` via `PAT_TOKEN`. Cache is split into `actions/cache/restore` + `actions/cache/save@v4` with `if: always()` so the 1-hour deps build is preserved even if a later step fails.
+
+### Self-hosted runner setup (Mac ARM64)
+
+The runner lives at `/Users/michael/GitHub/self-hosted-runner-environment/orca-runner/`, registered as `Michaels-Mac-Studio-orca` with labels `[self-hosted, macOS, ARM64]`. It's per-repo (self-hosted runners on personal GitHub accounts can't be org/account-scoped).
+
+**One-time host setup that the workflow itself cannot do:**
+
+1. **Apple Developer ID intermediates → System.keychain.** macOS cloud runners get this from bundled Xcode; a Command-Line-Tools-only Mac does not. Without these in System.keychain, `codesign` returns `errSecInternalComponent` with "unable to build chain to self-signed root" — even with the intermediates imported into a temp keychain via the workflow (codesign on macOS 26.x Tahoe ignores user-domain keychains for chain validation). Fix:
+   ```
+   curl -fsSL -o /tmp/DeveloperIDCA.cer   https://www.apple.com/certificateauthority/DeveloperIDCA.cer
+   curl -fsSL -o /tmp/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+   sudo security add-certificates -k /Library/Keychains/System.keychain \
+     /tmp/DeveloperIDCA.cer /tmp/DeveloperIDG2CA.cer
+   ```
+   G1 expires Feb 2027, G2 expires Sep 2031. Re-install when refreshed.
+
+2. **git-lfs.** Required by `actions/checkout@v5` with `lfs: true`. Cloud `macos-14` ships it; CLT does not. `brew install git-lfs && git lfs install`.
+
+3. **Full Xcode is NOT required.** Command Line Tools is sufficient for the deps build and the OrcaSlicer build. The workflow's "Free disk space" step (which wipes other Xcode installs on cloud) is gated by `if: runner.environment == 'github-hosted'`, so the runner Mac's `/Applications/Xcode_*.app` is never touched.
+
+**Repo secrets used by the sign + notarize step** (already configured for the cloud workflow, reused here):
+- `PAT_TOKEN` — PAT with `repo` + `workflow` scopes (also used to probe the runners API in `pick-runner`)
+- `BUILD_CERTIFICATE_BASE64`, `P12_PASSWORD`, `KEYCHAIN_PASSWORD`, `MACOS_CERTIFICATE_ID` — codesign
+- `APPLE_DEV_ACCOUNT`, `TEAM_ID`, `APP_PWD` — notarytool (app-specific password from appleid.apple.com)
+
+**Sign-step gotchas (Tahoe-specific):**
+- `notarytool store-credentials` defaults to `login.keychain`, which can't be unlocked non-interactively. Workflow passes `--keychain "$KEYCHAIN_PATH"` to store the notarytool profile in the temp keychain instead.
+- `security add-trusted-cert` prompts for admin authorization and hangs forever on non-interactive runners. Don't use it; rely on System.keychain trust instead.
+- `security list-keychains -d user -s <new>` *replaces* the search list. The workflow captures the original list into a bash array via `mapfile`-style read and restores it via an `EXIT` trap so a failed sign step never strands the host Mac without `login.keychain` in its search path.
+
+**Operating notes:**
+- Trigger: `gh workflow run build4mac_local.yml -R cyberralf83/OrcaSlicer --ref nightly-builds-with-bc`
+- Runner status: `gh api repos/cyberralf83/OrcaSlicer/actions/runners --jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'`
+- A fresh deps cache lives at the cache key `macos-14-cache-orcaslicer_deps-build-<hash of deps/**>`; first run is ~1h, subsequent runs skip Install-build-tools + Build-dependencies entirely.
 
 ## Build Commands
 
