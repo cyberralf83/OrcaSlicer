@@ -30,12 +30,12 @@ Flow: Slice -> "Send to BC" button -> export 3MF -> URL-encode path/name -> open
 Two macOS workflows, both producing signed + notarized DMGs published to the `nightly-mac-arm64` GitHub release:
 
 **`.github/workflows/build4mac.yml`** — cloud-only build, the source of truth.
-- Runs on schedule (every 4 days) or manual trigger
+- Manual trigger only (scheduled cron temporarily disabled — commented out, easy to restore; the schedule has been moved to `build4mac_local.yml`)
 - Fetches and merges upstream `nightly-builds` tag into `nightly-builds-with-bc` branch
 - Builds macOS ARM64 on `macos-14` using `build_release_macos.sh`
 - Creates a DMG and publishes the release
 
-**`.github/workflows/build4mac_local.yml`** — manual trigger only; routes to a self-hosted Mac ARM64 runner if one is online + idle, otherwise falls back to `macos-14`. Same final output as the cloud workflow. The `pick-runner` job probes `repos/cyberralf83/OrcaSlicer/actions/runners` via `PAT_TOKEN`. Cache is split into `actions/cache/restore` + `actions/cache/save@v4` with `if: always()` so the 1-hour deps build is preserved even if a later step fails.
+**`.github/workflows/build4mac_local.yml`** — runs on schedule (every 4 days at 2 AM UTC) or manual trigger; routes to a self-hosted Mac ARM64 runner if one is online + idle, otherwise falls back to `macos-14`. Same final output as the cloud workflow. The `pick-runner` job probes `repos/cyberralf83/OrcaSlicer/actions/runners` via `PAT_TOKEN`. Cache is split into `actions/cache/restore` + `actions/cache/save@v4` with `if: always()` so the 1-hour deps build is preserved even if a later step fails.
 
 ### Self-hosted runner setup (Mac ARM64)
 
