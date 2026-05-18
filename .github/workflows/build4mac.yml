@@ -1,8 +1,11 @@
 name: Build Mac ARM64 from Nightly
 
 on:
-  schedule:
-    - cron: '0 2 1,5,9,13,17,21,25,29 * *' # Run every 4 days at 2 AM UTC
+  # Scheduled trigger temporarily disabled — the self-hosted runner workflow
+  # (build4mac_local.yml) is handling the every-4-days cadence instead.
+  # Restore by uncommenting the lines below.
+  # schedule:
+  #   - cron: '0 2 1,5,9,13,17,21,25,29 * *' # Run every 4 days at 2 AM UTC
   workflow_dispatch: # Allow manual trigger
   
 concurrency:

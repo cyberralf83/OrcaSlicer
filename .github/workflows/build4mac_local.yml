@@ -1,6 +1,8 @@
 name: Build Mac ARM64 (Local Self-Hosted)
 
 on:
+  schedule:
+    - cron: '0 2 1,5,9,13,17,21,25,29 * *' # Run every 4 days at 2 AM UTC (temporarily moved here from build4mac.yml)
   workflow_dispatch:
     inputs:
       runner:
