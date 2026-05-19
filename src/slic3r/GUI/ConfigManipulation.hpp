@@ -23,6 +23,7 @@ class ConfigManipulation
     bool                is_msg_dlg_already_exist{ false };
     bool                m_is_initialized_support_material_overhangs_queried{ false };
     bool                m_support_material_overhangs_queried{ false };
+    bool                m_beam_density_xor_warned = false;
     bool                is_BBL_Printer{false};
 
     // function to loading of changed configuration

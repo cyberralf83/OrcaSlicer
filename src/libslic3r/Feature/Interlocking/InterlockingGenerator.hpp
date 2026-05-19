@@ -159,12 +159,12 @@ private:
      */
     void applyMicrostructureToOutlines(const std::unordered_set<GridPoint3>& cells, const std::vector<ExPolygons>& layer_regions) const;
 
-    /*!
-     * Filter cells for one beam axis using the 5-zone density pattern.
-     * Splits rows into contiguous segments and applies the pattern independently to each.
-     * \param cells The full set of cells to filter
-     * \param axis 0 = filter X-rows (for even beam layers), 1 = filter Y-rows (for odd beam layers)
-     * \return The filtered subset of cells
+    /**
+     * Filter cells for one beam axis using a repeating stripe pattern.
+     * Cells whose perpendicular-axis position satisfies
+     * `(pos - min_pos) % (cell_M + cell_G) < cell_M`
+     * are kept, where cell_M = ceil(beam_group_count/2)
+     * and cell_G = ceil(beam_gap/2).
      */
     std::unordered_set<GridPoint3> filterCellsForAxis(const std::unordered_set<GridPoint3>& cells, int axis) const;
 

@@ -536,10 +536,47 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         auto answer = dialog.ShowModal();
         if (answer == wxID_YES)
             new_conf.set_key_value("wall_generator", new ConfigOptionEnum<PerimeterGeneratorType>(PerimeterGeneratorType::Arachne));
-        else 
+        else
             new_conf.set_key_value("fuzzy_skin_mode", new ConfigOptionEnum<FuzzySkinMode>(FuzzySkinMode::Displacement));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
+    }
+
+    // Beam interlocking density control: the algorithm operates in cell units
+    // (each cell = one pair of A+B beam fingers), so odd finger counts are
+    // ceiling-rounded internally — 3 behaves identically to 4. Snap odd values
+    // up to the next even number so the displayed value matches the actual
+    // behavior. Silent (the tooltip already explains the pairing rule).
+    bool beam_interlocking_on = config->opt_bool("interlocking_beam");
+    int beam_group = config->opt_int("interlocking_beam_group_count");
+    int beam_gap   = config->opt_int("interlocking_beam_gap");
+    if (beam_interlocking_on && ((beam_group > 0 && (beam_group % 2) != 0) || (beam_gap > 0 && (beam_gap % 2) != 0))) {
+        DynamicPrintConfig new_conf = *config;
+        if (beam_group > 0 && (beam_group % 2) != 0)
+            new_conf.set_key_value("interlocking_beam_group_count", new ConfigOptionInt(beam_group + 1));
+        if (beam_gap > 0 && (beam_gap % 2) != 0)
+            new_conf.set_key_value("interlocking_beam_gap", new ConfigOptionInt(beam_gap + 1));
+        is_msg_dlg_already_exist = true;
+        apply(config, &new_conf);
+        is_msg_dlg_already_exist = false;
+        beam_group = config->opt_int("interlocking_beam_group_count");
+        beam_gap   = config->opt_int("interlocking_beam_gap");
+    }
+
+    // Beam density requires BOTH group count and gap to be > 0. Setting only
+    // one silently produces a solid comb (the density branch is gated on
+    // `group > 0 && gap > 0` in InterlockingGenerator). Warn the user instead.
+    bool xor_bad = beam_interlocking_on && (beam_group > 0) != (beam_gap > 0);
+    if (xor_bad && !m_beam_density_xor_warned) {
+        const wxString msg_text = _(L("Beam density control requires both 'Beam group count' and 'Beam gap' to be greater than 0. "
+                                        "With one of them at 0, the interlocking beams will be solid (no gaps)."));
+        MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+        is_msg_dlg_already_exist = true;
+        dialog.ShowModal();
+        is_msg_dlg_already_exist = false;
+        m_beam_density_xor_warned = true;
+    } else if (!xor_bad) {
+        m_beam_density_xor_warned = false;
     }
 }
 

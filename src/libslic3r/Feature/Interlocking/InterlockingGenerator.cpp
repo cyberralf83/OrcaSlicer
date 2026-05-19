@@ -201,17 +201,12 @@ void InterlockingGenerator::generateInterlockingStructure() const
         handleThinAreas(has_all_meshes);
     }
 
-    // Pre-filter the full cell set (including interface extensions from dilation)
-    // so that orphaned dilated cells in gap zones are removed before beam generation.
-    if (beam_group_count > 0 && beam_gap > 0 && !has_all_meshes.empty()) {
-        auto filtered0 = filterCellsForAxis(has_all_meshes, 0);
-        if (bidirectional) {
-            auto filtered1 = filterCellsForAxis(has_all_meshes, 1);
-            filtered0.insert(filtered1.begin(), filtered1.end());
-        }
-        has_all_meshes = std::move(filtered0);
-    }
-
+    // Density filtering is applied per-axis inside applyMicrostructureToOutlines
+    // (one stripe pattern per beam direction). No pre-filter is needed here:
+    // cells in the gap zones simply fail both per-axis checks and produce no
+    // beam, so iterating them is harmless. A previous pre-filter that unioned
+    // both axes here was a perf optimization, but it muddied reasoning about
+    // which cells survive — removed in favor of the single per-axis pass below.
     applyMicrostructureToOutlines(has_all_meshes, layer_regions);
 }
 
@@ -332,12 +327,14 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
 
     // Per-layer-type density filtering: a cell may pass for one beam direction
     // but not the other, so we need separate filtered sets per axis.
+    // Both axes are populated unconditionally when density is enabled; the
+    // type-1 set is unused in unidirectional mode (gated by the layer_type==1
+    // continue below), but populating it removes a latent empty-set trap.
     const bool density_enabled = beam_group_count > 0 && beam_gap > 0;
     std::unordered_set<GridPoint3> filtered_type0_storage, filtered_type1_storage;
     if (density_enabled) {
         filtered_type0_storage = filterCellsForAxis(cells, 0);
-        if (bidirectional)
-            filtered_type1_storage = filterCellsForAxis(cells, 1);
+        filtered_type1_storage = filterCellsForAxis(cells, 1);
     }
     const auto& filtered_type0 = density_enabled ? filtered_type0_storage : cells;
     const auto& filtered_type1 = density_enabled ? filtered_type1_storage : cells;

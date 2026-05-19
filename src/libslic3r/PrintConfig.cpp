@@ -4149,10 +4149,11 @@ void PrintConfigDef::init_fff_params()
     def           = this->add("interlocking_beam_group_count", coInt);
     def->label    = L("Beam group count");
     def->tooltip  = L("Number of consecutive beam fingers to keep per group. Each finger is one beam width. "
-                       "Odd values are rounded up to the next even number internally (beams are paired). "
+                       "Odd values are snapped up to the next even number (beams are paired; the field updates immediately when you enter an odd value). "
                        "Set to 0 to disable density control. "
                        "Both this and beam gap must be greater than 0 to enable density control.");
     def->min      = 0;
+    def->max      = 100;
     def->category = L("Advanced");
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
@@ -4160,7 +4161,7 @@ void PrintConfigDef::init_fff_params()
     def           = this->add("interlocking_beam_gap", coInt);
     def->label    = L("Beam gap");
     def->tooltip  = L("Number of beam finger widths to skip between groups. "
-                       "Odd values are rounded up to the next even number internally (beams are paired). "
+                       "Odd values are snapped up to the next even number (beams are paired; the field updates immediately when you enter an odd value). "
                        "Set to 0 for no gaps (all beams placed). "
                        "Both this and beam group count must be greater than 0 to enable density control.");
     def->min      = 0;
