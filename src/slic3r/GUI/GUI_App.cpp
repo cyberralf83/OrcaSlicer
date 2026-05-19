@@ -1900,6 +1900,7 @@ void GUI_App::init_networking_callbacks()
             }
             if (return_code == 5) {
                 GUI::wxGetApp().CallAfter([this, provider = event.provider] {
+                    BOOST_LOG_TRIVIAL(info) << "logout: login expired";
                     this->request_user_logout(provider);
                     MessageDialog msg_dlg(nullptr, _L("Login information expired. Please login again."), "", wxAPPLY | wxOK);
                     if (msg_dlg.ShowModal() == wxOK) {
@@ -4526,7 +4527,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
             }
             else if (command_str.compare("homepage_logout") == 0) {
                 CallAfter([this] {
-                    wxGetApp().request_user_logout();
+                    BOOST_LOG_TRIVIAL(info) << "logout: homepage_logout";
+                    request_user_logout();
                 });
             }
             else if (command_str.compare("get_orca_login_info") == 0) {
@@ -4539,18 +4541,22 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 CallAfter([this] { request_login(true, BBL_CLOUD_PROVIDER); });
             }
             else if (command_str.compare("homepage_bambu_logout") == 0) {
-                CallAfter([this] { request_user_logout(BBL_CLOUD_PROVIDER); });
+                CallAfter([this] {
+                    BOOST_LOG_TRIVIAL(info) << "logout: homepage_bambu_logout";
+                    request_user_logout(BBL_CLOUD_PROVIDER);
+                });
             }
             else if (command_str.compare("homepage_orca_login_or_register") == 0) {
                 CallAfter([this] { request_login(true, ORCA_CLOUD_PROVIDER); });
             }
             else if (command_str.compare("homepage_orca_logout") == 0) {
-                CallAfter([this] { request_user_logout(ORCA_CLOUD_PROVIDER); });
+                CallAfter([this] {
+                    BOOST_LOG_TRIVIAL(info) << "logout: homepage_orca_logout";
+                    request_user_logout(ORCA_CLOUD_PROVIDER);
+                });
             }
             else if (command_str.compare("homepage_modeldepot") == 0) {
-                CallAfter([this] {
-                    wxGetApp().open_mall_page_dialog();
-                });
+                CallAfter([this] { open_mall_page_dialog(); });
             }
             else if (command_str.compare("homepage_newproject") == 0) {
                 this->request_open_project("<new>");
@@ -4826,6 +4832,7 @@ void GUI_App::on_http_error(wxCommandEvent &evt)
     if (status == 401) {
         if (m_agent) {
             if (m_agent->is_user_login(provider)) {
+                BOOST_LOG_TRIVIAL(warning) << "logout: http error 401.";
                 this->request_user_logout(provider);
 
                 if (!m_show_http_errpr_msgdlg) {
@@ -5599,6 +5606,7 @@ void GUI_App::show_check_privacy_dlg(wxCommandEvent& evt)
     privacy_dlg.Bind(EVT_PRIVACY_UPDATE_CANCEL, [this, provider](wxCommandEvent &e) {
             app_config->set_bool("privacy_update_checked", false);
             if (m_agent) {
+                BOOST_LOG_TRIVIAL(info) << "logout: Privacy update dialog cancelled.";
                 m_agent->user_logout(false, provider);
                 post_logout_to_webview(provider);
             }
@@ -6766,6 +6774,7 @@ void GUI_App::stop_sync_user_preset()
 void GUI_App::on_stealth_mode_enter()
 {
     stop_sync_user_preset();
+    BOOST_LOG_TRIVIAL(info) << "logout: on_stealth_mode_enter";
     request_user_logout(ORCA_CLOUD_PROVIDER);
     request_user_logout(BBL_CLOUD_PROVIDER);
     if (mainframe && mainframe->m_webview) {
@@ -7553,6 +7562,13 @@ void GUI_App::open_exportpresetbundledialog(size_t open_on_tab, const std::strin
 
 void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_option)
 {
+    static constexpr const char* opengl_fxaa_setting_key = "opengl_fxaa_enabled";
+    static constexpr const char* opengl_fps_cap_setting_key = "opengl_fps_cap";
+    static constexpr const char* opengl_show_fps_overlay_setting_key = "opengl_show_fps_overlay";
+    const std::string previous_opengl_fxaa = app_config->get(opengl_fxaa_setting_key);
+    const std::string previous_opengl_fps_cap = app_config->get(opengl_fps_cap_setting_key);
+    const std::string previous_opengl_show_fps_overlay = app_config->get(opengl_show_fps_overlay_setting_key);
+
     bool need_recreate_gui = false;
     std::string pending_language;
     {
@@ -7589,6 +7605,14 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
             }
 #endif // _WIN32
         }
+    }
+
+    const bool opengl_fxaa_changed = app_config->get(opengl_fxaa_setting_key) != previous_opengl_fxaa;
+    const bool opengl_fps_cap_changed = app_config->get(opengl_fps_cap_setting_key) != previous_opengl_fps_cap;
+    const bool opengl_show_fps_overlay_changed = app_config->get(opengl_show_fps_overlay_setting_key) != previous_opengl_show_fps_overlay;
+    if ((opengl_fxaa_changed || opengl_fps_cap_changed || opengl_show_fps_overlay_changed) && !need_recreate_gui && this->plater_ != nullptr) {
+        this->plater_->set_current_canvas_as_dirty();
+        this->plater_->get_current_canvas3D()->force_set_focus();
     }
 
     if (!pending_language.empty()) {
