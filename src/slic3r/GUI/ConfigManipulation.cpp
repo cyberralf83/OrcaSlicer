@@ -914,6 +914,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
 
     toggle_line("flush_into_objects", !is_global_config);
 
+    toggle_line("flush_into_infill_min_layer",
+                !is_global_config
+                && have_prime_tower
+                && config->opt_bool("flush_into_infill")
+                && config->opt_enum<PrintSequence>("print_sequence") != PrintSequence::ByObject);
+
     toggle_line("support_interface_not_for_body",config->opt_int("support_interface_filament")&&!config->opt_int("support_filament"));
 
     // Get the current fuzzy skin state

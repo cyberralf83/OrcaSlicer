@@ -6905,6 +6905,22 @@ void PrintConfigDef::init_fff_params()
         "It will not take effect, unless the prime tower is enabled.");
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("flush_into_infill_min_layer", coInt);
+    def->category = L("Flush options");
+    def->label = L("Flush into infill: start at object layer");
+    def->tooltip = L("Only allow purging into objects' infill from this object-local layer onward "
+        "(counted from 1, excluding raft and stripped empty leading layers). "
+        "Set to 0 to allow purging on all layers. "
+        "Useful to keep the bottom shell clean of mixed-color purge. "
+        "Volume that would have purged into bottom-layer infill is redirected to the wipe tower instead, "
+        "so expect the wipe tower's per-layer purge volume to grow on gated layers. "
+        "Applies object-wide (not per-region) - set high enough to cover all regions' bottom_shell_layers. "
+        "Has no effect when By object print sequence is active with multiple extruders.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->max = 5000;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("flush_into_support", coBool);
     def->category = L("Flush options");
     def->label = L("Flush into objects' support");

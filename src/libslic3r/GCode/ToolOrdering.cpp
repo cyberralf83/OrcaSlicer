@@ -22,6 +22,8 @@
 #include <algorithm>
 #include <unordered_map>
 
+#include <boost/log/trivial.hpp>
+
 #include <libslic3r.h>
 
 namespace Slic3r {
@@ -1566,6 +1568,27 @@ bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, con
 
     if (!object.config().flush_into_infill || eec.role() != erInternalInfill)
         return false;
+
+    // flush_into_infill_min_layer gate: only allow purge into infill on object-local layer >= N (1-based).
+    // The gate lives inside is_overriddable (not at outer call sites) so collect_extruders, mark_wiping_extrusions,
+    // and ensure_perimeters_infills_order all see the same eligibility decision — keeping lt.extruders membership
+    // consistent and avoiding the "infill not in lt.extruders, never rescued" hazard on bottom layers.
+    const int min_layer = object.config().flush_into_infill_min_layer.value;
+    if (min_layer > 0) {
+        const Layer* this_layer = object.get_layer_at_printz(m_layer_tools->print_z, EPSILON);
+        if (this_layer == nullptr)
+            return false;
+        const size_t raft_layers = object.slicing_parameters().raft_layers();
+        if (this_layer->id() < raft_layers) {
+            BOOST_LOG_TRIVIAL(warning) << "flush_into_infill_min_layer: Layer::id() (" << this_layer->id()
+                                       << ") < raft_layers (" << raft_layers << ") at print_z="
+                                       << m_layer_tools->print_z << "; denying override.";
+            return false;
+        }
+        const size_t object_local_layer = this_layer->id() - raft_layers;
+        if (object_local_layer < static_cast<size_t>(min_layer - 1))
+            return false;
+    }
 
     return true;
 }

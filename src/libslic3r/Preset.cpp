@@ -1124,6 +1124,7 @@ static std::vector<std::string> s_Preset_print_options{
     "compatible_printers_condition",
     "inherits",
     "flush_into_infill",
+    "flush_into_infill_min_layer",
     "flush_into_objects",
     "flush_into_support",
     "tree_support_branch_angle",
