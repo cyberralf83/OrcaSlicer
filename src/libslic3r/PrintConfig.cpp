@@ -6914,8 +6914,7 @@ void PrintConfigDef::init_fff_params()
         "Useful to keep the bottom shell clean of mixed-color purge. "
         "Volume that would have purged into bottom-layer infill is redirected to the wipe tower instead, "
         "so expect the wipe tower's per-layer purge volume to grow on gated layers. "
-        "Applies object-wide (not per-region) - set high enough to cover all regions' bottom_shell_layers. "
-        "Has no effect when By object print sequence is active with multiple extruders.");
+        "Applies object-wide (not per-region) - set high enough to cover all regions' bottom_shell_layers.");
     def->sidetext = L("layers");
     def->min = 0;
     def->max = 5000;

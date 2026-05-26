@@ -65,7 +65,11 @@ static SettingsFactory::Bundle FREQ_SETTINGS_BUNDLE_FFF =
                                     "support_remove_small_overhang",
                                     "support_base_pattern_spacing", "support_expansion"}},
     //BBS
-    { L("Flush options")         , { "flush_into_infill", "flush_into_infill_min_layer", "flush_into_objects", "flush_into_support"} }
+    // NOTE: the first three entries (flush_into_infill, flush_into_objects, flush_into_support)
+    // are addressed by positional index [0], [1], [2] in append_menu_items_flush_options() below
+    // — all three must be ConfigOptionBool, in that order. Append non-bool extras (e.g.
+    // flush_into_infill_min_layer) AFTER index [2] only.
+    { L("Flush options")         , { "flush_into_infill", "flush_into_objects", "flush_into_support", "flush_into_infill_min_layer"} }
 };
 
 // pt_SLA
@@ -1099,6 +1103,12 @@ void MenuFactory::append_menu_item_scale_selection_to_fit_print_volume(wxMenu* m
         [](wxCommandEvent&) { plater()->scale_selection_to_fit_print_volume(); }, "", menu);
 }
 
+// NOTE: this function addresses FREQ_SETTINGS_BUNDLE_FFF["Flush options"] by positional index
+// [0]/[1]/[2] and calls option->getBool() on each. All three indices MUST resolve to a
+// ConfigOptionBool. See the matching contract comment at the bundle initializer above (search
+// for "FREQ_SETTINGS_BUNDLE_FFF"). Inserting any non-bool entry at [0], [1], or [2] throws
+// "Calling ConfigOption::getBool on a non-boolean ConfigOption" inside a wxEVT_UPDATE_UI handler
+// — which propagates uncaught and crashes the app on any right-click that builds the object menu.
 void MenuFactory::append_menu_items_flush_options(wxMenu* menu)
 {
     const wxString name = _L("Flush Options");

@@ -1563,7 +1563,13 @@ bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, con
     if (print_config.filament_soluble.get_at(m_layer_tools->extruder(eec, region)))
         return false;
 
-    if (object.config().flush_into_objects)
+    // Perimeters etc. on a dedicated-purge object are always overridable (upstream behavior).
+    // Infill (role == erInternalInfill) of a dedicated-purge object is also always overridable
+    // when the user has NOT opted into the per-object min_layer gate via flush_into_infill —
+    // preserves the upstream contract that flush_into_objects=true purges into the whole object.
+    // Infill on layers gated by flush_into_infill_min_layer falls through to the gate below
+    // only when the user opted in by also setting flush_into_infill.
+    if (object.config().flush_into_objects && (eec.role() != erInternalInfill || !object.config().flush_into_infill))
         return true;
 
     if (!object.config().flush_into_infill || eec.role() != erInternalInfill)
@@ -1578,7 +1584,16 @@ bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, con
         const Layer* this_layer = object.get_layer_at_printz(m_layer_tools->print_z, EPSILON);
         if (this_layer == nullptr)
             return false;
-        const size_t raft_layers = object.slicing_parameters().raft_layers();
+        const SlicingParameters& sp = object.slicing_parameters();
+        if (!sp.valid) {
+            // Slicing parameters should be finalized by Print::apply() before psWipeTower runs.
+            // Reaching this branch means the invariant is broken — log so the regression is visible.
+            BOOST_LOG_TRIVIAL(warning) << "flush_into_infill_min_layer: SlicingParameters not finalized "
+                                       << "for object at print_z=" << m_layer_tools->print_z
+                                       << "; denying override (fail-closed).";
+            return false;
+        }
+        const size_t raft_layers = sp.raft_layers();
         if (this_layer->id() < raft_layers) {
             BOOST_LOG_TRIVIAL(warning) << "flush_into_infill_min_layer: Layer::id() (" << this_layer->id()
                                        << ") < raft_layers (" << raft_layers << ") at print_z="
