@@ -1,0 +1,468 @@
+name: Build Mac ARM64 (One-Off)
+
+# Manual one-off build of an arbitrary ref (tag / branch / SHA).
+# Unlike build4mac_local.yml this workflow:
+#   - is NOT scheduled
+#   - does NOT fetch+merge upstream nightly-builds (builds the ref verbatim)
+#   - does NOT modify the nightly-mac-arm64 release
+#   - publishes to its own per-ref release: oneoff-<ref-sanitized>
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag, branch, or commit SHA to build (e.g. pre-flush-feature-2026-05-18)'
+        type: string
+        required: true
+      runner:
+        description: 'Runner override (auto = probe for self-hosted macOS ARM64, fall back to macos-14)'
+        type: choice
+        required: false
+        default: 'auto'
+        options:
+          - auto
+          - self-hosted
+          - macos-14
+      release_notes:
+        description: 'Optional extra release-notes text (markdown).'
+        type: string
+        required: false
+        default: ''
+
+concurrency:
+  # Allow parallel one-off builds for different refs, but serialize repeat builds of the same ref.
+  group: ${{ github.workflow }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pick-runner:
+    name: Pick build runner
+    runs-on: ubuntu-latest
+    outputs:
+      labels: ${{ steps.check.outputs.labels }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          RUNNER_OVERRIDE: ${{ inputs.runner }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          case "${RUNNER_OVERRIDE:-auto}" in
+            self-hosted)
+              echo 'labels=["self-hosted","macOS","ARM64"]' >> "$GITHUB_OUTPUT"
+              echo "Manual override: self-hosted"
+              exit 0
+              ;;
+            macos-14)
+              echo 'labels=["macos-14"]' >> "$GITHUB_OUTPUT"
+              echo "Manual override: macos-14"
+              exit 0
+              ;;
+          esac
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo 'labels=["macos-14"]' >> "$GITHUB_OUTPUT"
+            echo "PAT_TOKEN not set — falling back to macos-14"
+            exit 0
+          fi
+          ONLINE=$(timeout 10s gh api "repos/${REPO}/actions/runners" --jq \
+            '[.runners[] | select(.status=="online" and .busy==false and ([.labels[].name] | contains(["self-hosted","macOS","ARM64"])))] | length' \
+            2>/dev/null || echo "")
+          if [ -n "$ONLINE" ] && [ "$ONLINE" -gt 0 ] 2>/dev/null; then
+            echo 'labels=["self-hosted","macOS","ARM64"]' >> "$GITHUB_OUTPUT"
+            echo "Self-hosted macOS ARM64 runners online and idle: $ONLINE — using self-hosted"
+          else
+            echo 'labels=["macos-14"]' >> "$GITHUB_OUTPUT"
+            echo "No idle self-hosted macOS ARM64 runners — falling back to macos-14"
+          fi
+
+  build_mac_arm64:
+    name: Build Mac ARM64
+    needs: pick-runner
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.labels) }}
+    permissions:
+      contents: write
+    env:
+      date:
+      ver:
+      ver_pure:
+      ref_safe:
+      resolved_sha:
+
+    steps:
+      - name: Validate PAT token secret
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "$PAT_TOKEN" ]; then
+            echo "::error::PAT_TOKEN secret is not set. Create a PAT with 'repo' and 'workflow' scopes and add it as PAT_TOKEN in repository secrets."
+            echo "Repository secrets: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+
+      - name: Checkout requested ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          lfs: 'true'
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Compute ref_safe and resolved SHA
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          # Sanitize the requested ref for use as a release-tag suffix:
+          # strip refs/{tags,heads}/ prefix and replace '/' with '-'.
+          # INPUT_REF flows in via env (not direct ${{ }} interpolation in the
+          # script body) so shell metacharacters in the input cannot escape.
+          RAW="$INPUT_REF"
+          REF_SAFE="${RAW#refs/tags/}"
+          REF_SAFE="${REF_SAFE#refs/heads/}"
+          REF_SAFE="${REF_SAFE//\//-}"
+          echo "ref_safe=$REF_SAFE" >> "$GITHUB_ENV"
+          RESOLVED_SHA=$(git rev-parse HEAD)
+          echo "resolved_sha=$RESOLVED_SHA" >> "$GITHUB_ENV"
+          echo "Resolved ref '$RAW' -> SHA $RESOLVED_SHA"
+
+      - name: Get date and version
+        run: |
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          ver="V${ver_pure}-oneoff-${ref_safe}"
+          echo "ver=$ver" >> $GITHUB_ENV
+          echo "ver_pure=$ver_pure" >> $GITHUB_ENV
+          echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
+        shell: bash
+
+      # Cache key keyed off deps/** hash so each ref uses its appropriate dep cache.
+      # Refs whose deps/ shape differs from any prior cache will trigger a full
+      # 1h deps build on first use; subsequent rebuilds of the same ref hit.
+      - name: Generate cache key
+        id: cache_key
+        run: |
+          echo "cache-key=macos-14-cache-orcaslicer_deps-build-${{ hashFiles('deps/**') }}" >> $GITHUB_OUTPUT
+          echo "cache-path=${{ github.workspace }}/deps/build" >> $GITHUB_OUTPUT
+
+      - name: Load cached deps
+        id: cache_deps
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.cache_key.outputs.cache-path }}
+          key: ${{ steps.cache_key.outputs.cache-key }}
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
+      - name: Install build tools
+        if: steps.cache_deps.outputs.cache-hit != 'true'
+        run: |
+          brew install automake texinfo libtool
+          brew list
+          if brew list --formula zstd &>/dev/null; then
+            brew uninstall --ignore-dependencies zstd
+          fi
+
+      - name: Build dependencies
+        if: steps.cache_deps.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "SDKROOT=$SDKROOT"
+          ls -la "$(dirname "$SDKROOT")"
+          ./build_release_macos.sh -dx -a arm64 -1
+          cd "${{ github.workspace }}/deps/build/arm64"
+          find . -name .DS_Store -delete 2>/dev/null || true
+          find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} + 2>/dev/null || true
+          find . -name .DS_Store -delete 2>/dev/null || true
+          find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +
+          brew install zstd
+
+      - name: Dump GMP config.log on failure
+        if: failure() && steps.cache_deps.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "=== xcode-select -p ==="
+          xcode-select -p || true
+          echo "=== xcrun --show-sdk-path ==="
+          xcrun --show-sdk-path || true
+          echo "=== which cc / cc --version ==="
+          which cc || true
+          /Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc --version || true
+          echo "=== GMP config.log (full, with conftest details) ==="
+          CFG=deps/build/arm64/dep_GMP-prefix/src/dep_GMP/config.log
+          if [ -f "$CFG" ]; then
+            wc -l "$CFG"
+            grep -nE "conftest|error:|warning:|fatal|cannot|undefined|gmp_compile_test|configure:[0-9]+:" "$CFG" | head -200
+            echo "---- first 600 lines ----"
+            head -600 "$CFG"
+          else
+            echo "no config.log at $CFG"
+          fi
+
+      - name: Save deps cache
+        if: always() && steps.cache_deps.outputs.cache-hit != 'true' && steps.cache_key.outputs.cache-key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.cache_key.outputs.cache-path }}
+          key: ${{ steps.cache_key.outputs.cache-key }}
+
+      - name: Install tools for build
+        run: |
+          brew install libtool
+          mkdir -p ${{ github.workspace }}/deps/build
+
+      - name: Free disk space
+        # Cloud macos-14 ships with multiple Xcodes (~50-60 GB); the build needs space.
+        # Skip on self-hosted so we don't delete the runner Mac's Xcode installs.
+        if: runner.environment == 'github-hosted'
+        run: |
+          df -hI /dev/disk3s1s1
+          sudo find /Applications -maxdepth 1 -type d -name "Xcode_*.app" ! -name "Xcode_15.4.app" -exec rm -rf {} +
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
+          df -hI /dev/disk3s1s1
+
+      - name: Build OrcaSlicer
+        working-directory: ${{ github.workspace }}
+        run: |
+          export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          ./build_release_macos.sh -s -n -x -a arm64 -1
+
+      - name: Sign app and notarize
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+        run: |
+          DEBUG_LOG=/tmp/orca-sign-debug.log
+          : > "$DEBUG_LOG"
+          exec > >(tee -a "$DEBUG_LOG") 2>&1
+          echo "=== sign step started: $(date -u +%FT%TZ) ==="
+          trap 'rc=$?; echo "ERR at line $LINENO (rc=$rc): $BASH_COMMAND"' ERR
+
+          echo "Pre-checks:"
+          for v in BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD CERTIFICATE_ID RUNNER_TEMP; do
+            eval "val=\$$v"
+            if [ -n "$val" ]; then echo "  $v: SET (${#val} chars)"; else echo "  $v: EMPTY"; fi
+          done
+          echo "  OrcaSlicer.app present: $([ -d "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app" ] && echo yes || echo NO)"
+          echo "  macOS: $(sw_vers -productVersion 2>/dev/null) on $(uname -m)"
+
+          ORIG_KCS=()
+          while IFS= read -r path; do
+            [ -n "$path" ] && ORIG_KCS+=("$path")
+          done < <(security list-keychains -d user | awk -F'"' '/"/ {print $2}')
+          echo "Original user keychain search list (${#ORIG_KCS[@]} entries):"
+          for k in "${ORIG_KCS[@]}"; do echo "  - $k"; done
+
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          restore_keychains() {
+            set +e
+            if [ ${#ORIG_KCS[@]} -gt 0 ]; then
+              security list-keychains -d user -s "${ORIG_KCS[@]}"
+            fi
+            if [ -f "$KEYCHAIN_PATH" ]; then
+              security delete-keychain "$KEYCHAIN_PATH" || true
+            fi
+          }
+          trap restore_keychains EXIT
+
+          [ -f "$KEYCHAIN_PATH" ] && security delete-keychain "$KEYCHAIN_PATH"
+
+          echo "Decoding certificate ($(echo -n "$BUILD_CERTIFICATE_BASE64" | wc -c | tr -d ' ') base64 chars)..."
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+          echo "  -> p12 size: $(stat -f%z "$CERTIFICATE_PATH") bytes"
+          echo "Creating keychain..."
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "Setting keychain settings..."
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          echo "Unlocking keychain..."
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "Importing certificate..."
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          echo "Setting keychain as primary (prepended to original list)..."
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "${ORIG_KCS[@]}"
+
+          INTERMEDIATES_DIR="$RUNNER_TEMP/apple-intermediates"
+          mkdir -p "$INTERMEDIATES_DIR"
+          for cert_url in \
+            https://www.apple.com/appleca/AppleIncRootCertificate.cer \
+            https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer \
+            https://www.apple.com/certificateauthority/DeveloperIDCA.cer; do
+            fname=$(basename "$cert_url")
+            echo "Fetching $fname..."
+            curl -fsSL -o "$INTERMEDIATES_DIR/$fname" "$cert_url"
+            echo "Importing $fname into temp keychain..."
+            security import "$INTERMEDIATES_DIR/$fname" -k "$KEYCHAIN_PATH" -A -t cert -f x509 || true
+            security add-certificates -k "$KEYCHAIN_PATH" "$INTERMEDIATES_DIR/$fname" 2>&1 || true
+          done
+
+          echo "--- Certs in temp keychain ---"
+          security find-certificate -a "$KEYCHAIN_PATH" | grep -E "labl|alis" | sort -u
+          echo "--- Verify leaf cert chain ---"
+          LEAF_PEM="$RUNNER_TEMP/leaf.pem"
+          security find-certificate -c "Developer ID Application" -p "$KEYCHAIN_PATH" > "$LEAF_PEM" 2>&1 || true
+          if [ -s "$LEAF_PEM" ]; then
+            echo "Running: security verify-cert -k $KEYCHAIN_PATH -c $LEAF_PEM -p codeSign"
+            security verify-cert -k "$KEYCHAIN_PATH" -c "$LEAF_PEM" -p codeSign 2>&1 || echo "verify-cert returned non-zero"
+          else
+            echo "No leaf cert found in temp keychain (find-certificate empty)"
+          fi
+          echo "--- Identities visible to codesign ---"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+          echo "--- End diagnostics ---"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+
+          codesign --keychain "$KEYCHAIN_PATH" --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app
+
+          if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
+            codesign --keychain "$KEYCHAIN_PATH" --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app
+          fi
+
+          mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg
+          rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/*
+          cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/
+          ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg/Applications
+
+          sync
+          sleep 2
+
+          hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+          codesign --keychain "$KEYCHAIN_PATH" --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+          if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
+            mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg
+            rm -rf ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/*
+            cp -R ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/
+            ln -sfn /Applications ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg/Applications
+
+            sync
+            sleep 2
+
+            hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/arm64/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+            codesign --keychain "$KEYCHAIN_PATH" --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          fi
+
+          trap - ERR
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" \
+            --team-id "${{ secrets.TEAM_ID }}" \
+            --password "${{ secrets.APP_PWD }}" \
+            --keychain "$KEYCHAIN_PATH"
+          xcrun notarytool submit "OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg" \
+            --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
+          xcrun stapler staple OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+          if [ -f "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" ]; then
+            xcrun notarytool submit "OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg" \
+              --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
+            xcrun stapler staple OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: OrcaSlicer_Mac_arm64_${{ env.ver }}
+          path: ${{ github.workspace }}/OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
+
+      - name: Upload profile validator DMG
+        uses: actions/upload-artifact@v5
+        with:
+          name: OrcaSlicer_Mac_arm64_profile_validator_${{ env.ver }}
+          path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
+          if-no-files-found: ignore
+
+  release:
+    name: Publish one-off release
+    needs: [build_mac_arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Compute release tag and metadata
+        id: meta
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          # INPUT_REF flows in via env so shell metacharacters in the input
+          # cannot affect command parsing.
+          RAW="$INPUT_REF"
+          REF_SAFE="${RAW#refs/tags/}"
+          REF_SAFE="${REF_SAFE#refs/heads/}"
+          REF_SAFE="${REF_SAFE//\//-}"
+          RELEASE_TAG="oneoff-${REF_SAFE}"
+          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          GIT_SHA=$(git rev-parse HEAD)
+          GIT_SHA_SHORT=$(git rev-parse --short=10 HEAD)
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "ref_safe=${REF_SAFE}"       >> $GITHUB_OUTPUT
+          echo "version=${ver_pure}"        >> $GITHUB_OUTPUT
+          echo "sha=${GIT_SHA}"             >> $GITHUB_OUTPUT
+          echo "sha_short=${GIT_SHA_SHORT}" >> $GITHUB_OUTPUT
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: OrcaSlicer_Mac_arm64_*
+          merge-multiple: true
+          path: ./artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          echo "Contents of artifacts directory:"
+          ls -la ./artifacts/
+          echo "Looking for DMG files:"
+          find ./artifacts -name "*.dmg" -type f
+
+      - name: Recreate one-off release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          REQUESTED_REF: ${{ inputs.ref }}
+          RESOLVED_SHA: ${{ steps.meta.outputs.sha }}
+          RESOLVED_SHA_SHORT: ${{ steps.meta.outputs.sha_short }}
+          ORCA_VERSION: ${{ steps.meta.outputs.version }}
+          EXTRA_NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+          # All values come from env vars rather than direct ${{ }} interpolation
+          # so untrusted ref content cannot inject shell commands.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Deleting existing release '$RELEASE_TAG'..."
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
+          fi
+
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "One-off Mac ARM64 build of \`${REQUESTED_REF}\`."
+            echo
+            echo "**Source ref:** \`${REQUESTED_REF}\`"
+            echo "**Resolved SHA:** \`${RESOLVED_SHA}\`"
+            echo "**OrcaSlicer version at this commit:** ${ORCA_VERSION}"
+            echo
+            echo "Built for macOS (ARM64 / Apple Silicon). Signed and notarized by Apple — installs and runs without security warnings."
+            echo
+            echo "This is a manual one-off build. It does **not** replace the regular nightly release (\`nightly-mac-arm64\`)."
+            echo
+            echo "$EXTRA_NOTES"
+          } > "$NOTES_FILE"
+
+          echo "Creating release '$RELEASE_TAG' at SHA $RESOLVED_SHA..."
+          gh release create "$RELEASE_TAG" \
+            --target "$RESOLVED_SHA" \
+            --title "One-off build: ${REQUESTED_REF} (${RESOLVED_SHA_SHORT})" \
+            --notes-file "$NOTES_FILE" \
+            ./artifacts/*.dmg
+
+          rm -f "$NOTES_FILE"
