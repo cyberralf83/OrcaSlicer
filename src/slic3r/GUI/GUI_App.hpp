@@ -19,6 +19,9 @@
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
+#ifdef ENABLE_MCP_SERVER
+#include "slic3r/MCP/McpApiServer.h"
+#endif
 #include "../Utils/PrintHost.hpp"
 
 #include <wx/app.h>
@@ -330,6 +333,9 @@ private:
     bool             m_show_error_msgdlg{false};
     wxString         m_info_dialog_content;
     HttpServer       m_http_server;
+#ifdef ENABLE_MCP_SERVER
+    McpApiServer     m_mcp_server;
+#endif
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
 public:
@@ -546,6 +552,11 @@ public:
     void            start_http_server(const std::string& provider = ORCA_CLOUD_PROVIDER);
     void            start_http_server(int port, const std::string& provider = ORCA_CLOUD_PROVIDER);
     void            stop_http_server();
+#ifdef ENABLE_MCP_SERVER
+    void            start_mcp_server();
+    void            stop_mcp_server();
+    bool            is_mcp_server_running() const;
+#endif
     void            switch_staff_pick(bool on);
 
     void            on_show_check_privacy_dlg(int online_login = 0, const std::string& provider = ORCA_CLOUD_PROVIDER);
