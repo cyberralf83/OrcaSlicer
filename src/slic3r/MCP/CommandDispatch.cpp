@@ -11,7 +11,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include <miniz.h>
-#include <GL/glew.h>
+#include <glad/gl.h>
 
 #include <future>
 #include <set>
