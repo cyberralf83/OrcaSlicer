@@ -6,6 +6,8 @@
 #include "Layer.hpp"
 
 #include <algorithm>
+#include <map>
+#include <set>
 
 namespace std {
 template<> struct hash<Slic3r::GridPoint3>
@@ -202,7 +204,7 @@ void InterlockingGenerator::generateInterlockingStructure() const
     }
 
     // Density filtering is applied per-axis inside applyMicrostructureToOutlines
-    // (one stripe pattern per beam direction). No pre-filter is needed here:
+    // (one density pattern per beam direction). No pre-filter is needed here:
     // cells in the gap zones simply fail both per-axis checks and produce no
     // beam, so iterating them is harmless. A previous pre-filter that unioned
     // both axes here was a perf optimization, but it muddied reasoning about
@@ -409,35 +411,105 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
 std::unordered_set<GridPoint3> InterlockingGenerator::filterCellsForAxis(
     const std::unordered_set<GridPoint3>& cells, int axis) const
 {
-    // Beam density filtering using a repeating stripe pattern perpendicular to beams.
+    // Thin out the interlocking beams with a 5-zone pattern applied per row of cells,
+    // perpendicular to the beam run-direction. beam_group_count (M) and beam_gap (G)
+    // are in cell units (one cell = one interlocking tooth of each material).
     //
-    // Each grid cell spans 2 beam widths in the perpendicular direction (one finger
-    // per mesh), so the user-facing beam_group_count and beam_gap values (in finger
-    // units) are converted to cell units via ceiling division.
-    //
-    // For type-0 beams (axis==0), beams run along grid-X; filter on grid-Y.
-    // For type-1 beams (axis==1), beams run along grid-Y; filter on grid-X.
+    // The fingers of a type-0 (even) beam layer repeat along grid-X (see
+    // generateMicrostructure: each cell is split along X, spanning the full cell in Y),
+    // so to reduce the *number* of parallel beams we group cells by (y, z) and thin
+    // along x. Type-1 (odd) layers are the mirror: group by (x, z), thin along y.
 
-    int cell_M = (beam_group_count + 1) / 2;  // fingers → cells (ceiling)
-    int cell_G = (beam_gap + 1) / 2;
-    int stride = cell_M + cell_G;
+    // Apply the 5-zone pattern to one contiguous segment of positions:
+    // M beams at the left end, G gap, a middle filled left-to-right with repeating
+    // M-beam groups separated by G gaps (last group truncated), G gap, M beams at the
+    // right end. Segments no longer than 2*M keep every beam (the ends overlap), so
+    // both sides of any boundary segment are always anchored.
+    auto filterSegment = [this](const std::vector<coord_t>& positions) -> std::set<coord_t> {
+        std::set<coord_t> keep;
+        int count = (int)positions.size();
+        int M = beam_group_count;
+        int G = beam_gap;
 
-    coord_t min_perp = std::numeric_limits<coord_t>::max();
-    for (const auto& cell : cells) {
-        coord_t perp = (axis == 0) ? cell.y() : cell.x();
-        if (perp < min_perp) min_perp = perp;
+        // Short segment: ends overlap, keep all
+        if (count <= 2 * M) {
+            for (auto& p : positions) keep.insert(p);
+            return keep;
+        }
+
+        // Left end: M beams
+        for (int i = 0; i < M; i++)
+            keep.insert(positions[i]);
+
+        // Right end: M beams
+        for (int i = count - M; i < count; i++)
+            keep.insert(positions[i]);
+
+        // Middle fill zone
+        int middle_start = M + G;
+        int middle_end = count - M - G;  // exclusive
+        if (middle_start < middle_end) {
+            int stride = M + G;
+            for (int i = middle_start; i < middle_end; i++) {
+                int pos_in_stride = (i - middle_start) % stride;
+                if (pos_in_stride < M)
+                    keep.insert(positions[i]);
+            }
+        }
+
+        return keep;
+    };
+
+    // Split a sorted row of positions into contiguous segments (consecutive grid
+    // coordinates differ by exactly 1) and apply the 5-zone pattern to each segment
+    // independently, so every disjoint boundary segment gets its own anchored ends.
+    auto filterRow = [&filterSegment](std::vector<coord_t>& positions) -> std::set<coord_t> {
+        std::set<coord_t> keep;
+        std::sort(positions.begin(), positions.end());
+
+        std::vector<coord_t> segment;
+        segment.push_back(positions[0]);
+        for (size_t i = 1; i < positions.size(); i++) {
+            if (positions[i] != positions[i - 1] + 1) {
+                auto seg_keep = filterSegment(segment);
+                keep.insert(seg_keep.begin(), seg_keep.end());
+                segment.clear();
+            }
+            segment.push_back(positions[i]);
+        }
+        auto seg_keep = filterSegment(segment);
+        keep.insert(seg_keep.begin(), seg_keep.end());
+
+        return keep;
+    };
+
+    if (axis == 0) {
+        // type-0 beams repeat along x: group by (y, z), thin along x
+        std::map<std::pair<coord_t, coord_t>, std::vector<coord_t>> rows;
+        for (const auto& cell : cells)
+            rows[{cell.y(), cell.z()}].push_back(cell.x());
+
+        std::unordered_set<GridPoint3> result;
+        for (auto& [key, positions] : rows) {
+            auto keep_set = filterRow(positions);
+            for (coord_t x : keep_set)
+                result.insert(GridPoint3(x, key.first, key.second));
+        }
+        return result;
+    } else {
+        // type-1 beams repeat along y: group by (x, z), thin along y
+        std::map<std::pair<coord_t, coord_t>, std::vector<coord_t>> rows;
+        for (const auto& cell : cells)
+            rows[{cell.x(), cell.z()}].push_back(cell.y());
+
+        std::unordered_set<GridPoint3> result;
+        for (auto& [key, positions] : rows) {
+            auto keep_set = filterRow(positions);
+            for (coord_t y : keep_set)
+                result.insert(GridPoint3(key.first, y, key.second));
+        }
+        return result;
     }
-
-    std::unordered_set<GridPoint3> result;
-    for (const auto& cell : cells) {
-        coord_t perp = (axis == 0) ? cell.y() : cell.x();
-        int pos_in_stride = ((int)(perp - min_perp)) % stride;
-        if (pos_in_stride < 0) pos_in_stride += stride;
-        if (pos_in_stride < cell_M)
-            result.insert(cell);
-    }
-
-    return result;
 }
 
 } // namespace Slic3r
