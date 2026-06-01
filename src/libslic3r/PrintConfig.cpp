@@ -693,6 +693,26 @@ void PrintConfigDef::init_common_params()
     def->gui_type = ConfigOptionDef::GUIType::one_string;
     def->set_default_value(new ConfigOptionPointsGroups{});
 
+    def           = this->add("support_parallel_printheads", coBool);
+    def->label    = L("Support parallel printheads");
+    def->tooltip  = L("Enable printer settings for machines that can use multiple printheads in parallel.");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool{false});
+
+    def           = this->add("parallel_printheads_count", coInt);
+    def->label    = L("Parallel printheads count");
+    def->tooltip  = L("Set the number of parallel printheads for machines like OrangeStorm Giga printer.");
+    def->mode     = comAdvanced;
+    def->min      = 1;
+    def->max      = 4;
+    def->set_default_value(new ConfigOptionInt{1});
+
+    def           = this->add("parallel_printheads_bed_exclude_areas", coStrings);
+    def->label    = L("Parallel printheads bed exclude areas");
+    def->tooltip  = L("Ordered list of bed exclude areas by parallel printhead count. Item 1 applies to one printhead, item 2 to two printheads, and so on. Leave an item empty for no excluded area.");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionStrings());
+
     //BBS: add "bed_exclude_area"
     def = this->add("bed_exclude_area", coPoints);
     def->label = L("Bed exclude area");
@@ -3027,6 +3047,36 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(60));
 
+    def           = this->add("lightning_overhang_angle", coFloat);
+    def->label    = L("Lightning overhang angle");
+    def->category = L("Strength");
+    def->tooltip  = L("Maximum overhang angle for Lightning infill support propagation.");
+    def->sidetext = u8"°";
+    def->min      = 5;
+    def->max      = 85;
+    def->mode     = comExpert;
+    def->set_default_value(new ConfigOptionFloat(45));
+
+    def           = this->add("lightning_prune_angle", coFloat);
+    def->label    = L("Prune angle");
+    def->category = L("Strength");
+    def->tooltip  = L("Controls how aggressively short or unsupported Lightning branches are pruned. This angle is converted internally to a per-layer distance.");
+    def->sidetext = u8"°";
+    def->min      = 5;
+    def->max      = 85;
+    def->mode     = comExpert;
+    def->set_default_value(new ConfigOptionFloat(45));
+
+    def           = this->add("lightning_straightening_angle", coFloat);
+    def->label    = L("Straightening angle");
+    def->category = L("Strength");
+    def->tooltip  = L("Maximum straightening angle used to simplify Lightning branches.");
+    def->sidetext = u8"°";
+    def->min      = 5;
+    def->max      = 85;
+    def->mode     = comExpert;
+    def->set_default_value(new ConfigOptionFloat(45));
+
     auto def_infill_anchor_min = def = this->add("infill_anchor", coFloatOrPercent);
     def->label = L("Sparse infill anchor length");
     def->category = L("Strength");
@@ -4021,10 +4071,10 @@ void PrintConfigDef::init_fff_params()
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Infill");
     def->category = L("Extruders");
-    def->tooltip = L("Filament to print internal sparse infill.");
-    def->min = 1;
+    def->tooltip = L("Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament.");
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("sparse_infill_line_width", coFloatOrPercent);
     def->label = L("Sparse infill");
@@ -4953,10 +5003,10 @@ void PrintConfigDef::init_fff_params()
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Walls");
     def->category = L("Extruders");
-    def->tooltip = L("Filament to print walls.");
-    def->min = 1;
+    def->tooltip = L("Filament to print walls.\n\"Default\" uses the active object/part filament.");
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");
@@ -5714,10 +5764,10 @@ void PrintConfigDef::init_fff_params()
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Solid infill");
     def->category = L("Extruders");
-    def->tooltip = L("Filament to print solid infill.");
-    def->min = 1;
+    def->tooltip = L("Filament to print solid infill.\n\"Default\" uses the active object/part filament.");
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("internal_solid_infill_line_width", coFloatOrPercent);
     def->label = L("Internal solid infill");
@@ -6093,7 +6143,7 @@ void PrintConfigDef::init_fff_params()
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label    = L("Support/raft base");
     def->category = L("Support");
-    def->tooltip = L("Filament to print support base and raft. \"Default\" means no specific filament for support and current filament is used.");
+    def->tooltip = L("Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used.");
     def->min = 0;
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionInt(0));
@@ -6128,7 +6178,7 @@ void PrintConfigDef::init_fff_params()
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label    = L("Support/raft interface");
     def->category = L("Support");
-    def->tooltip = L("Filament to print support interface. \"Default\" means no specific filament for support interface and current filament is used.");
+    def->tooltip = L("Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used.");
     def->min = 0;
     // BBS
     def->mode = comSimple;
@@ -8415,9 +8465,9 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
         int extruder = this->option("extruder")->getInt();
         this->erase("extruder");
         if (extruder != 0) {
-            if (!this->has("sparse_infill_filament"))
+            if (!this->has("sparse_infill_filament") || this->option("sparse_infill_filament")->getInt() == 0)
                 this->option("sparse_infill_filament", true)->setInt(extruder);
-            if (!this->has("wall_filament"))
+            if (!this->has("wall_filament") || this->option("wall_filament")->getInt() == 0)
                 this->option("wall_filament", true)->setInt(extruder);
             // Don't propagate the current extruder to support.
             // For non-soluble supports, the default "0" extruder means to use the active extruder,
@@ -8429,8 +8479,11 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
         }
     }
 
-    if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))
-        this->option("solid_infill_filament", true)->setInt(this->option("sparse_infill_filament")->getInt());
+    if (this->has("sparse_infill_filament")) {
+        int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
+        if (sparse_infill_filament > 0 && (!this->has("solid_infill_filament") || this->option("solid_infill_filament")->getInt() == 0))
+            this->option("solid_infill_filament", true)->setInt(sparse_infill_filament);
+    }
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {
@@ -8488,9 +8541,9 @@ void DynamicPrintConfig::normalize_fdm_1()
         int extruder = this->option("extruder")->getInt();
         this->erase("extruder");
         if (extruder != 0) {
-            if (!this->has("sparse_infill_filament"))
+            if (!this->has("sparse_infill_filament") || this->option("sparse_infill_filament")->getInt() == 0)
                 this->option("sparse_infill_filament", true)->setInt(extruder);
-            if (!this->has("wall_filament"))
+            if (!this->has("wall_filament") || this->option("wall_filament")->getInt() == 0)
                 this->option("wall_filament", true)->setInt(extruder);
             // Don't propagate the current extruder to support.
             // For non-soluble supports, the default "0" extruder means to use the active extruder,
@@ -8502,8 +8555,11 @@ void DynamicPrintConfig::normalize_fdm_1()
         }
     }
 
-    if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))
-        this->option("solid_infill_filament", true)->setInt(this->option("sparse_infill_filament")->getInt());
+    if (this->has("sparse_infill_filament")) {
+        int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
+        if (sparse_infill_filament > 0 && (!this->has("solid_infill_filament") || this->option("solid_infill_filament")->getInt() == 0))
+            this->option("solid_infill_filament", true)->setInt(sparse_infill_filament);
+    }
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {
