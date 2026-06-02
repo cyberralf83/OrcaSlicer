@@ -2719,6 +2719,22 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 15. });
 
+    def = this->add("filament_minimal_purge_on_chute", coFloats);
+    def->label = L("Minimal chute flush length");
+    def->tooltip = L("Minimum length of filament purged out of the nozzle and into the waste chute "
+                     "during a tool change, in millimetres of filament. (Note: the adjacent \"Minimal "
+                     "purge on wipe tower\" is a volume in mm³, not a length.) When most of the flush is "
+                     "redirected into the object's infill, the leftover chute purge can become too small "
+                     "to fall free and may stick to the nozzle. Raising this guarantees enough filament "
+                     "to drop cleanly. A built-in minimum of about 40 mm (100 mm³) already applies, so "
+                     "values below that have little effect. Set to 0 to disable (default). Only effective "
+                     "on printers that eject purge through a chute via the change filament G-code "
+                     "(e.g. Bambu Lab).");
+    def->sidetext = L("mm");	// millimeters, CIS languages need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
     def = this->add("filament_cooling_before_tower", coFloats);
     def->label = L("Wipe tower cooling");
     def->tooltip = L("Temperature drop before entering filament tower");
