@@ -4247,8 +4247,9 @@ void PrintConfigDef::init_fff_params()
 
     def           = this->add("interlocking_beam_group_count", coInt);
     def->label    = L("Beam group count");
-    def->tooltip  = L("Number of consecutive interlocking beams to keep per group. "
-                       "Both ends of each boundary segment always get a full group, with the middle filled left-to-right. "
+    def->tooltip  = L("Number of consecutive interlocking beams (of each filament) to keep per group. "
+                       "Both ends of each boundary segment always get a full group, with the middle filled left-to-right; "
+                       "very short boundaries may keep every beam. "
                        "Set to 0 to disable density control (all beams placed). "
                        "Both this and beam gap must be greater than 0 to enable density control.");
     def->min      = 0;
@@ -4259,7 +4260,7 @@ void PrintConfigDef::init_fff_params()
 
     def           = this->add("interlocking_beam_gap", coInt);
     def->label    = L("Beam gap");
-    def->tooltip  = L("Number of interlocking beams to skip between groups. "
+    def->tooltip  = L("Number of interlocking beams (of each filament) to skip between groups. "
                        "Set to 0 for no gaps (all beams placed). "
                        "Both this and beam group count must be greater than 0 to enable density control.");
     def->min      = 0;
