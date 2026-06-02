@@ -356,7 +356,10 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
 
                 size_t layer_type = beam_layer_idx % cell_area_per_mesh_per_layer.size();
 
-                // Skip perpendicular layers in unidirectional mode
+                // Skip perpendicular layers in unidirectional mode. This continue
+                // also guarantees the layer_type == 1 density check below is never
+                // reached when !bidirectional, so leaving filtered_type1 unpopulated
+                // (see the `if (bidirectional)` guard above) is safe.
                 if (!bidirectional && layer_type == 1)
                     continue;
 
