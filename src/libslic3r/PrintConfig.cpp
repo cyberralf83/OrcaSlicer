@@ -5488,6 +5488,41 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnum<SeamPosition>(spAligned));
 
+    def = this->add("seam_hide_at_interface", coBool);
+    def->label = L("Hide seam at part interface");
+    def->category = L("Quality");
+    def->tooltip = L("On a multi-material object made of several touching parts, tuck the wall seam into the "
+                     "buried contact interface between the parts, where it is hidden by the neighbouring part. "
+                     "Only affects objects with more than one region per layer (e.g. multiple filaments or modifier "
+                     "meshes that share a layer); it has no effect on single-material objects or on separate objects "
+                     "that merely touch.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("seam_interface_depth", coFloat);
+    def->label = L("Interface seam depth");
+    def->category = L("Quality");
+    def->tooltip = L("Approximate minimum depth the seam must be buried inside the contact interface before it is "
+                     "hidden there. If this is larger than the actual interface depth, no point qualifies and the seam "
+                     "silently falls back to a normal (possibly visible) position. Only used when \"Hide seam at part "
+                     "interface\" is enabled.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(2.0));
+
+    def = this->add("seam_interface_skip_bottom_layers", coInt);
+    def->label = L("Interface seam bottom skip");
+    def->category = L("Quality");
+    def->tooltip = L("The first N object layers above the plate (raft excluded) use a normal seam instead of hiding it "
+                     "at the interface, keeping the visible bottom edge clean. A value greater than or equal to the "
+                     "object's layer count disables the feature for that object. Only used when \"Hide seam at part "
+                     "interface\" is enabled.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(5));
+
     def = this->add("staggered_inner_seams", coBool);
     def->label = L("Staggered inner seams");
     def->category = L("Quality");

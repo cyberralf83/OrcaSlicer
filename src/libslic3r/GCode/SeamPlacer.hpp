@@ -1,6 +1,7 @@
 #ifndef libslic3r_SeamPlacer_hpp_
 #define libslic3r_SeamPlacer_hpp_
 
+#include <algorithm>
 #include <limits>
 #include <optional>
 #include <vector>
@@ -52,6 +53,30 @@ struct Perimeter {
   Vec3f final_seam_position = Vec3f::Zero();
 };
 
+// Decides whether a single perimeter point is buried deeply enough inside the merged layer silhouette
+// to be preferred as a hidden seam location (e.g. a multimaterial part interface). Kept here as a free
+// function so the slicing path and the unit tests evaluate the exact same logic.
+//  - should_compute_layer_embedding: false on single-region layers, where embedded_distance is meaningless.
+//  - embedded_distance: signed distance to the merged silhouette plus 0.65*flow_width (negative == inside).
+// When seam_hide_at_interface is off this reduces to the exact upstream behavior (deeper than 0.5 mm inside).
+inline bool seam_point_is_embedded_enough(const PrintObjectConfig &cfg,
+                                          size_t                   layer_idx,
+                                          bool                     should_compute_layer_embedding,
+                                          float                    embedded_distance,
+                                          float                    flow_width)
+{
+  if (!should_compute_layer_embedding)
+    return false;
+  // Feature OFF: reproduce the upstream embedded_distance < -0.5f preference (equivalent for all values
+  // except the exact, measure-zero boundary embedded_distance == -0.5f).
+  if (!cfg.seam_hide_at_interface.value)
+    return embedded_distance < -0.5f;
+  // The +0.65*flow_width term cancels the same offset baked into embedded_distance, so the comparison
+  // is against the requested burial depth measured from the interface.
+  return layer_idx >= (size_t) std::max(0, cfg.seam_interface_skip_bottom_layers.value)
+         && embedded_distance < -(float) cfg.seam_interface_depth.value + 0.65f * flow_width;
+}
+
 //Struct over which all processing of perimeters is done. For each perimeter point, its respective candidate is created,
 // then all the needed attributes are computed and finally, for each perimeter one point is chosen as seam.
 // This seam position can be then further aligned
@@ -59,7 +84,7 @@ struct SeamCandidate {
   SeamCandidate(const Vec3f &pos, Perimeter &perimeter,
                 float local_ccw_angle,
                 EnforcedBlockedSeamPoint type) :
-                                                 position(pos), perimeter(perimeter), visibility(0.0f), overhang(0.0f), embedded_distance(0.0f), local_ccw_angle(
+                                                 position(pos), perimeter(perimeter), visibility(0.0f), overhang(0.0f), embedded_distance(0.0f), embedded_enough(false), local_ccw_angle(
                                                                                                                                                      local_ccw_angle), type(type), central_enforcer(false) {
   }
   const Vec3f position;
@@ -71,6 +96,10 @@ struct SeamCandidate {
   // distance inside the merged layer regions, for detecting perimeter points which are hidden indside the print (e.g. multimaterial join)
   // Negative sign means inside the print, comes from EdgeGrid structure
   float embedded_distance;
+  // True when this point is buried deeply enough inside the merged layer silhouette (e.g. a
+  // multimaterial part interface) to be preferred as a hidden seam location. Computed once in
+  // calculate_overhangs_and_layer_embedding so every seam-mode comparator path respects the same decision.
+  bool embedded_enough;
   float local_ccw_angle;
   EnforcedBlockedSeamPoint type;
   bool central_enforcer; //marks this candidate as central point of enforced segment on the perimeter - important for alignment

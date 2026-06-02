@@ -766,11 +766,11 @@ struct SeamComparator {
       return a.overhang < b.overhang;
     }
 
-    // prefer hidden points (more than 0.5 mm inside)
-    if (a.embedded_distance < -0.5f && b.embedded_distance > -0.5f) {
+    // prefer hidden points (buried deeply enough inside the print, e.g. a multimaterial part interface)
+    if (a.embedded_enough && !b.embedded_enough) {
       return true;
     }
-    if (b.embedded_distance < -0.5f && a.embedded_distance > -0.5f) {
+    if (b.embedded_enough && !a.embedded_enough) {
       return false;
     }
 
@@ -824,11 +824,11 @@ struct SeamComparator {
       return a.overhang < b.overhang;
     }
 
-    // prefer hidden points (more than 0.5 mm inside)
-    if (a.embedded_distance < -0.5f && b.embedded_distance > -0.5f) {
+    // prefer hidden points (buried deeply enough inside the print, e.g. a multimaterial part interface)
+    if (a.embedded_enough && !b.embedded_enough) {
       return true;
     }
-    if (b.embedded_distance < -0.5f && a.embedded_distance > -0.5f) {
+    if (b.embedded_enough && !a.embedded_enough) {
       return false;
     }
 
@@ -1060,8 +1060,9 @@ void SeamPlacer::calculate_overhangs_and_layer_embedding(const PrintObject *po) 
   using PerimeterDistancer = AABBTreeLines::LinesDistancer<Linef>;
 
   std::vector<PrintObjectSeamData::LayerSeams> &layers = m_seam_per_object[po].layers;
+  const PrintObjectConfig &cfg = po->config();
   tbb::parallel_for(tbb::blocked_range<size_t>(0, layers.size()),
-                    [po, &layers](tbb::blocked_range<size_t> r) {
+                    [po, &layers, &cfg](tbb::blocked_range<size_t> r) {
                       std::unique_ptr<PerimeterDistancer> prev_layer_distancer;
                       if (r.begin() > 0) { // previous layer exists
                         prev_layer_distancer = std::make_unique<PerimeterDistancer>(to_unscaled_linesf(po->layers()[r.begin() - 1]->lslices));
@@ -1096,6 +1097,12 @@ void SeamPlacer::calculate_overhangs_and_layer_embedding(const PrintObject *po) 
                             perimeter_point.embedded_distance = current_layer_distancer->distance_from_lines<true>(point.cast<double>())
                                                                 + 0.65f * perimeter_point.perimeter.flow_width;
                           }
+
+                          // Decide once whether this point is buried deeply enough to be preferred as a hidden seam,
+                          // so every seam-mode comparator path respects the same decision.
+                          perimeter_point.embedded_enough = seam_point_is_embedded_enough(
+                              cfg, layer_idx, should_compute_layer_embedding,
+                              perimeter_point.embedded_distance, perimeter_point.perimeter.flow_width);
                         }
 
                         prev_layer_distancer.swap(current_layer_distancer);

@@ -47,3 +47,6 @@ internal_docs/
 *.flatpak
 /flatpak-repo/
 .claude/worktrees/beam-interlocking-enhancements/
+
+# Superpowers brainstorm visual-companion artifacts
+.superpowers/
