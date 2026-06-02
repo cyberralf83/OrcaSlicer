@@ -873,16 +873,18 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 // ORCA: Enforce a per-filament minimum chute flush ("poop"). The option is a filament
                 // length (mm); convert it to the purge volume (mm³) the rest of this block works in.
                 // When most of the tool-change flush is diverted into object infill, tcr.purge_volume can
-                // fall to ~0, leaving a poop too small to drop free of the nozzle (it sticks). Only real
-                // filament changes are padded; finish-layer / priming / same-tool results keep the
-                // original behaviour so we don't emit spurious purge.
+                // fall to ~0, leaving a poop too small to drop free of the nozzle (it sticks). The floor
+                // applies only on real colour changes on BBL chute printers (matching the BBL-only UI);
+                // every other case keeps the original behaviour so we never emit spurious purge.
                 float filament_area = float((M_PI / 4.f) * pow(full_config.filament_diameter.get_at(new_filament_id), 2));
                 const float min_chute_length   = (float) full_config.filament_minimal_purge_on_chute.get_at(new_filament_id);
                 const float min_chute_purge    = min_chute_length * filament_area; // mm of filament -> mm³
                 const bool  is_real_toolchange = tcr.is_tool_change && tcr.initial_tool != tcr.new_tool;
+                const bool  apply_chute_min    = is_real_toolchange && min_chute_purge > EPSILON && gcodegen.is_BBL_Printer();
                 float purge_volume = (tcr.purge_volume < EPSILON)
-                    ? ((is_real_toolchange && min_chute_purge > EPSILON) ? std::max(min_chute_purge, g_min_purge_volume) : 0.f)
-                    : std::max({tcr.purge_volume, g_min_purge_volume, min_chute_purge});
+                    ? (apply_chute_min ? std::max(min_chute_purge, g_min_purge_volume) : 0.f)
+                    : (apply_chute_min ? std::max({tcr.purge_volume, g_min_purge_volume, min_chute_purge})
+                                       : std::max(tcr.purge_volume, g_min_purge_volume));
                 float purge_length = purge_volume / filament_area;
 
                 int old_filament_e_feedrate = (old_filament_id != -1) ? (int)(60.0 * full_config.filament_max_volumetric_speed.get_at(old_filament_id) / filament_area) : 200;
@@ -964,9 +966,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 config.set_key_value("filament_tower_interface_purge_volume", new ConfigOptionFloat(full_config.filament_tower_interface_purge_volume.get_at(new_filament_id)));
                 config.set_key_value("filament_tower_interface_print_temp", new ConfigOptionInt(interface_temp));
 
-                // ORCA: guarantee at least one flush segment so a small (e.g. user-floored) purge volume
-                // still produces a chute poop; round() would otherwise yield 0 segments below ~67 mm³.
-                int   flush_count = std::max(1, std::min(g_max_flush_count, (int) std::round(purge_volume / g_purge_volume_one_time)));
+                int   flush_count = std::min(g_max_flush_count, (int) std::round(purge_volume / g_purge_volume_one_time));
                 float flush_unit  = purge_length / flush_count;
                 int   flush_idx   = 0;
                 for (; flush_idx < flush_count; flush_idx++) {
@@ -7840,14 +7840,6 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
         old_filament_e_feedrate = 200;
     }
     float wipe_length = wipe_volume / filament_area;
-    // ORCA: mirror the per-filament minimum chute flush on the no-wipe-tower / Type2 emitter path.
-    // Only pads genuine tool changes (wipe_volume > 0); same-tool / no-flush cases stay untouched.
-    const float min_chute_length = (float) m_config.filament_minimal_purge_on_chute.get_at(new_filament_id);
-    const float min_chute_purge  = min_chute_length * filament_area;
-    if (min_chute_purge > EPSILON && wipe_volume > EPSILON) {
-        wipe_volume = std::max(wipe_volume, min_chute_purge);
-        wipe_length = wipe_volume / filament_area;
-    }
     int new_filament_e_feedrate = (int)(60.0 * m_config.filament_max_volumetric_speed.get_at(new_filament_id) / filament_area);
     new_filament_e_feedrate = new_filament_e_feedrate == 0 ? 100 : new_filament_e_feedrate;
 
@@ -7931,7 +7923,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     dyn_config.set_key_value("filament_cooling_before_tower", new ConfigOptionFloats(filament_cooling_before_tower));
     dyn_config.set_key_value("flush_length", new ConfigOptionFloat(wipe_length));
 
-    int flush_count = std::max(1, std::min(g_max_flush_count, (int)std::round(wipe_volume / g_purge_volume_one_time)));
+    int flush_count = std::min(g_max_flush_count, (int)std::round(wipe_volume / g_purge_volume_one_time));
     float flush_unit = wipe_length / flush_count;
     int flush_idx = 0;
     for (; flush_idx < flush_count; flush_idx++) {
