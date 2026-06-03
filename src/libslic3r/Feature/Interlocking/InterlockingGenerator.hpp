@@ -160,15 +160,13 @@ private:
     void applyMicrostructureToOutlines(const std::unordered_set<GridPoint3>& cells, const std::vector<ExPolygons>& layer_regions) const;
 
     /**
-     * Filter cells for one beam direction to thin out the interlocking beams.
-     *
-     * Cells are grouped into rows perpendicular to the beam run-direction
-     * (axis 0 = even/type-0 beams, grouped by (y,z) and thinned along x;
-     *  axis 1 = odd/type-1 beams, grouped by (x,z) and thinned along y), each
-     * row is split into contiguous segments, and a 5-zone pattern is applied per
-     * segment: beam_group_count beams at each end (anchored), beam_gap-wide gaps,
-     * and a middle filled left-to-right with repeating groups (last one truncated).
-     * Counts are in cell units (one cell = one interlocking tooth of each material).
+     * Thins the interlocking beams for one beam direction. Keeps a cell iff the rank
+     * of its column along the run-axis (ascending distinct coordinate, thin along X
+     * for axis 0 / type-0, along Y for axis 1 / type-1) satisfies
+     * rank % (beam_group_count + beam_gap) < beam_group_count -- i.e. keep
+     * beam_group_count consecutive beams, skip beam_gap, repeat. Single-column
+     * interfaces are kept whole; edges are not anchored. Counts are in cell units
+     * (one cell = one interlocking tooth of each material).
      */
     std::unordered_set<GridPoint3> filterCellsForAxis(const std::unordered_set<GridPoint3>& cells, int axis) const;
 

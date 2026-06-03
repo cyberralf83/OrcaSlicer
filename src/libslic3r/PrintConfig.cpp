@@ -4264,8 +4264,8 @@ void PrintConfigDef::init_fff_params()
     def           = this->add("interlocking_beam_group_count", coInt);
     def->label    = L("Beam group count");
     def->tooltip  = L("Number of consecutive interlocking beams (of each filament) to keep per group. "
-                       "Both ends of each boundary segment always get a full group, with the middle filled left-to-right; "
-                       "very short boundaries may keep every beam. "
+                       "Beams are thinned with a repeating keep-group / skip-gap pattern along each beam direction; "
+                       "interfaces only one beam wide keep every beam. "
                        "Set to 0 to disable density control (all beams placed). "
                        "Both this and beam gap must be greater than 0 to enable density control.");
     def->min      = 0;
