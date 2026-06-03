@@ -16689,7 +16689,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
             boost::starts_with(opt_key, "prime_tower") ||
             boost::starts_with(opt_key, "wipe_tower") ||
             opt_key == "filament_minimal_purge_on_wipe_tower" ||
-            opt_key == "filament_minimal_purge_on_chute" ||
+            opt_key == "minimal_chute_flush_length" ||
             opt_key == "single_extruder_multi_material" ||
             // BBS
             opt_key == "prime_volume") {

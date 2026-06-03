@@ -1453,7 +1453,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInts,                filament_cooling_moves))
     ((ConfigOptionFloats,              filament_cooling_initial_speed))
     ((ConfigOptionFloats,              filament_minimal_purge_on_wipe_tower))
-    ((ConfigOptionFloats,              filament_minimal_purge_on_chute))
+    // ORCA: process-scoped (persisted via s_Preset_print_options) despite living in this GCodeConfig
+    // block — preset membership is whitelist-driven, not struct-driven. Global scalar chute-flush floor.
+    ((ConfigOptionFloat,               minimal_chute_flush_length))
     ((ConfigOptionFloatsNullable,      filament_cooling_before_tower))
     ((ConfigOptionFloats,              filament_tower_interface_pre_extrusion_dist))
     ((ConfigOptionFloats,              filament_tower_interface_pre_extrusion_length))

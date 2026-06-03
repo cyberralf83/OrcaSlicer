@@ -2719,21 +2719,23 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 15. });
 
-    def = this->add("filament_minimal_purge_on_chute", coFloats);
+    def = this->add("minimal_chute_flush_length", coFloat);
     def->label = L("Minimal chute flush length");
-    def->tooltip = L("Minimum length of filament purged out of the nozzle and into the waste chute "
-                     "during a tool change, in millimetres of filament. (Note: the adjacent \"Minimal "
-                     "purge on wipe tower\" is a volume in mm³, not a length.) When most of the flush is "
-                     "redirected into the object's infill, the leftover chute purge can become too small "
-                     "to fall free and may stick to the nozzle. Raising this guarantees enough filament "
-                     "to drop cleanly. A built-in minimum of about 40 mm (100 mm³) already applies, so "
-                     "values below that have little effect. Set to 0 to disable (default). Only effective "
-                     "on printers that eject purge through a chute via the change filament G-code "
-                     "(e.g. Bambu Lab).");
+    def->category = L("Flush options");
+    def->tooltip = L("Minimum length of filament purged into the waste chute on a tool change, as a "
+                     "length in millimetres of filament (not a volume). This is a single global value; "
+                     "the resulting purge volume scales with each filament's diameter (about 40 mm is "
+                     "100 mm³ for 1.75 mm filament). When most of the flush is redirected into the "
+                     "object's infill, the leftover chute purge can become too small to fall free and "
+                     "may stick to the nozzle; raising this guarantees enough filament to drop cleanly. "
+                     "A built-in minimum of about 40 mm (100 mm³) already applies, so smaller values "
+                     "have little effect. Set to 0 to disable (default). Only effective on printers that "
+                     "eject purge through a chute via the change filament G-code (e.g. Bambu Lab), and "
+                     "only when the prime tower is enabled.");
     def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloats { 0. });
+    def->set_default_value(new ConfigOptionFloat(0.));
 
     def = this->add("filament_cooling_before_tower", coFloats);
     def->label = L("Wipe tower cooling");

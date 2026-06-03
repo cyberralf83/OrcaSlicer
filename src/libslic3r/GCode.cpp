@@ -870,14 +870,15 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 int new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(new_filament_id) : full_config.nozzle_temperature.get_at(new_filament_id);
                 Vec3d nozzle_pos = gcode_writer.get_position();
 
-                // ORCA: Enforce a per-filament minimum chute flush ("poop"). The option is a filament
-                // length (mm); convert it to the purge volume (mm³) the rest of this block works in.
+                // ORCA: Enforce a global minimum chute flush ("poop"). The option is a global filament
+                // length (mm); convert it to the per-filament purge volume (mm³) the rest of this block
+                // works in, using the incoming filament's cross-sectional area.
                 // When most of the tool-change flush is diverted into object infill, tcr.purge_volume can
                 // fall to ~0, leaving a poop too small to drop free of the nozzle (it sticks). The floor
                 // applies only on real colour changes on BBL chute printers (matching the BBL-only UI);
                 // every other case keeps the original behaviour so we never emit spurious purge.
                 float filament_area = float((M_PI / 4.f) * pow(full_config.filament_diameter.get_at(new_filament_id), 2));
-                const float min_chute_length   = (float) full_config.filament_minimal_purge_on_chute.get_at(new_filament_id);
+                const float min_chute_length   = (float) full_config.minimal_chute_flush_length.value;
                 const float min_chute_purge    = min_chute_length * filament_area; // mm of filament -> mm³
                 const bool  is_real_toolchange = tcr.is_tool_change && tcr.initial_tool != tcr.new_tool;
                 const bool  apply_chute_min    = is_real_toolchange && min_chute_purge > EPSILON && gcodegen.is_BBL_Printer();
