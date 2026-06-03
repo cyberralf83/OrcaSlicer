@@ -881,6 +881,13 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : {"flush_into_infill", "flush_into_support", "flush_into_objects"})
         toggle_field(el, have_prime_tower);
 
+    // ORCA: minimum chute flush — BBL-only row. The UI gate is_BBL_Printer is the preset vendor; the
+    // G-code emission gate gcodegen.is_BBL_Printer() is the runtime printer (intentionally different).
+    // Greys out without a prime tower, like the flush_into_* options above, since the floor is a no-op
+    // without the tower.
+    toggle_line("minimal_chute_flush_length", is_BBL_Printer);
+    toggle_field("minimal_chute_flush_length", is_BBL_Printer && have_prime_tower);
+
     bool have_avoid_crossing_perimeters = config->opt_bool("reduce_crossing_wall");
     toggle_line("max_travel_detour_distance", have_avoid_crossing_perimeters);
 
