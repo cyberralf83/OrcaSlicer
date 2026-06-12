@@ -25,6 +25,31 @@ Adds a "Send to BC" button for BBL printers that exports the sliced file and ope
 
 Flow: Slice -> "Send to BC" button -> export 3MF -> URL-encode path/name -> open `bambu-connect://` URL scheme
 
+### Minimum Chute Flush feature (`minimal_chute_flush_length`)
+
+A custom fork feature (beyond the Bambu Connect plugin) that enforces a **minimum droppable chute "poop"** on BBL AMS colour changes. Process-scoped (Print Settings preset, "Flush options" optgroup), BBL-only, `coFloat` in **mm of filament feed**, default `0` = off. Touches `PrintConfig.cpp/hpp`, `Preset.cpp` (whitelist: in `s_Preset_print_options`), `GCode.cpp`, `Print.cpp` (invalidation), `Tab.cpp`, `ConfigManipulation.cpp`, `Plater.cpp`.
+
+**Why it exists — the starvation regime stock Orca does NOT cover.** On BBL the chute purge volume is decided in `GCode.cpp:885-888`:
+```cpp
+float purge_volume = (tcr.purge_volume < EPSILON)
+    ? (apply_chute_min ? std::max(min_chute_purge, g_min_purge_volume) : 0.f)
+    : (apply_chute_min ? std::max({tcr.purge_volume, g_min_purge_volume, min_chute_purge})
+                       : std::max(tcr.purge_volume, g_min_purge_volume));
+```
+- `g_min_purge_volume = 100.f` (GCode.cpp:92) is the **upstream** Bambu floor (committed 2022, present in stock Orca) — NOT fork code. It only lives in the `≥ EPSILON` branch.
+- `min_chute_purge = minimal_chute_flush_length × filament_area` (1.75 mm filament ⇒ `area ≈ 2.405 mm³/mm`).
+- `apply_chute_min = is_real_toolchange && min_chute_purge > EPSILON && is_BBL_Printer()`.
+
+**Flush-into-infill** (`mark_wiping_extrusions`, ToolOrdering.cpp) diverts purge into object infill *first*, shrinking `tcr.purge_volume`. When it absorbs ~everything, `tcr.purge_volume < EPSILON` → with the feature **off** the top branch returns **`0.f`** — the 100 mm³ floor is **bypassed, not applied**. Result: no real poop, only ooze/stringing (a thin ~30–40 mm × ~0.4 mm wisp ≈ 4–5 mm³) that clings to the nozzle instead of dropping. This is the real-world failure that motivated the feature; the feature is the **only** path that lifts those bypassed-to-0 changes back to a droppable ≥100 mm³ coil.
+
+**Behaviour (three regimes; counterintuitive, by design — not a bug):**
+- **0 mm = off:** absorbed changes emit 0 at the chute (lowest waste, but the sticky/non-drop case).
+- **~1–41.6 mm = dead zone:** `min_chute_purge < 100`, so `max(setting, 100) = 100` regardless — every value gives the same result. (Below `100/area ≈ 41.6 mm` the slider appears stuck; first nonzero step still flips absorbed changes 0→100 mm³, a visible jump.)
+- **> ~41.6 mm = real scaling:** `min_chute_purge` clears 100 and raises EVERY real colour change linearly (~2.4 mm³/mm).
+- No value lands a chute purge **between 1 and 99 mm³** on a real change — the hardcoded 100 mm³ floor forbids it. To allow an intermediate droppable poop, the chute path would need to use the user's value as its own floor and bypass `g_min_purge_volume` (do NOT lower `g_min_purge_volume` globally — it floors normal colour-flush purge everywhere).
+
+**Units/intuition:** report chute purge as VOLUME (mm³) or MASS (~0.12 g PLA per 100 mm³). The real ~100 mm³ poop is a ~2 mm-thick coil ~30 mm long with a thin drawn tail — NOT a clean 0.4 mm thread (100 mm³ as a 0.4 mm thread would be ~796 mm, which never physically forms). To inspect per-change chute volumes, slice headless and sum `G1 E` between `; FLUSH_START`/`; FLUSH_END`.
+
 ### CI Workflows
 
 Two macOS workflows, both producing signed + notarized DMGs published to the `nightly-mac-arm64` GitHub release:
