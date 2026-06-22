@@ -175,7 +175,7 @@ jobs:
       
       - name: Load cached deps
         id: cache_deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.cache_key.outputs.cache-path }}
           key: ${{ steps.cache_key.outputs.cache-key }}
@@ -314,13 +314,13 @@ jobs:
           fi
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: OrcaSlicer_Mac_arm64_${{ env.ver }}
           path: ${{ github.workspace }}/OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
 
       - name: Upload profile validator DMG
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: OrcaSlicer_Mac_arm64_profile_validator_${{ env.ver }}
           path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
@@ -348,7 +348,7 @@ jobs:
           echo "sha=${git_sha}" >> $GITHUB_OUTPUT
       
       - name: Download artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           pattern: OrcaSlicer_Mac_arm64_*
           merge-multiple: true

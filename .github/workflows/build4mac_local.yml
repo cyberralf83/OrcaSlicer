@@ -228,7 +228,7 @@ jobs:
       # (default 'actions/cache' post step is gated on success()).
       - name: Load cached deps
         id: cache_deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ steps.cache_key.outputs.cache-path }}
           key: ${{ steps.cache_key.outputs.cache-key }}
@@ -293,7 +293,7 @@ jobs:
       # Save the rebuilt deps cache even if a later step (sign/notarize) fails.
       - name: Save deps cache
         if: always() && steps.cache_deps.outputs.cache-hit != 'true' && steps.cache_key.outputs.cache-key != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ steps.cache_key.outputs.cache-path }}
           key: ${{ steps.cache_key.outputs.cache-key }}
@@ -490,13 +490,13 @@ jobs:
           fi
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: OrcaSlicer_Mac_arm64_${{ env.ver }}
           path: ${{ github.workspace }}/OrcaSlicer_Mac_arm64_${{ env.ver }}.dmg
 
       - name: Upload profile validator DMG
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: OrcaSlicer_Mac_arm64_profile_validator_${{ env.ver }}
           path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_arm64_${{ env.ver }}.dmg
@@ -524,7 +524,7 @@ jobs:
           echo "sha=${git_sha}" >> $GITHUB_OUTPUT
       
       - name: Download artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           pattern: OrcaSlicer_Mac_arm64_*
           merge-multiple: true
