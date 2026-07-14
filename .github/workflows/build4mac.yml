@@ -96,62 +96,26 @@ jobs:
               echo "Merge successful"
             else
               echo "=== Merge conflicts detected ==="
-
-              echo "=== Getting list of conflicted files ==="
               CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
+
+              # Do NOT auto-resolve. This previously ran `git checkout --ours` on every
+              # conflicted file, which silently discarded upstream's side, pushed the
+              # result to nightly-builds-with-bc, and still exited green. Each merge then
+              # started from that poisoned state and lost more upstream code. Abort
+              # instead: nothing is pushed, nothing is lost, and a human resolves it.
+              git merge --abort
+
+              echo "::error::Upstream merge conflict - branch NOT updated, nothing pushed. Resolve locally, then re-run."
               echo "Conflicted files:"
               echo "$CONFLICTED_FILES"
-
-              echo "=== Resolving conflicts by keeping our versions ==="
-              git diff --name-only --diff-filter=U | while read file; do
-                echo "Keeping our version of: $file"
-                git checkout --ours "$file"
-                git add "$file"
-              done
-
-              echo "=== Committing partial merge ==="
-              git commit -m "Partial merge of upstream nightly-builds (${UPSTREAM_SHA:0:8}) - conflicts pending"
-              PARTIAL_MERGE_SHA=$(git rev-parse HEAD)
-              echo "Partial merge SHA: ${PARTIAL_MERGE_SHA}"
-
-              echo "=== Pushing partial merge to nightly-builds-with-bc ==="
-              git push origin nightly-builds-with-bc
-
-              echo "=== Creating conflict branch for PR ==="
-              CONFLICT_BRANCH="merge-conflict-$(date +%Y%m%d-%H%M%S)"
-              echo "Conflict branch name: ${CONFLICT_BRANCH}"
-              git checkout -b "$CONFLICT_BRANCH" HEAD~1
-
-              echo "=== Re-attempting merge to show conflicts ==="
-              git merge ${UPSTREAM_SHA} --no-commit --no-ff || true
-
-              echo "=== Committing conflicts for PR ==="
-              git commit -a -m "WIP: Merge conflicts from upstream nightly-builds (${UPSTREAM_SHA:0:8})"
-
-              echo "=== Pushing conflict branch ==="
-              git push origin "$CONFLICT_BRANCH"
-
-              echo "=== Switching back to nightly-builds-with-bc ==="
-              git checkout nightly-builds-with-bc
-
-              echo "=== Creating PR for conflict resolution ==="
-              gh pr create \
-                --base nightly-builds-with-bc \
-                --head "$CONFLICT_BRANCH" \
-                --title "Resolve merge conflicts from upstream nightly-builds ($(date +%Y-%m-%d))" \
-                --body "Automated merge from upstream encountered conflicts in the following files:
-
-              \`\`\`
-              $CONFLICTED_FILES
-              \`\`\`
-
-              **Upstream SHA:** ${UPSTREAM_SHA}
-
-              The nightly-builds-with-bc branch has been updated with all non-conflicting changes. This PR contains the conflicted files for manual resolution.
-
-              Please review and resolve the conflicts, then merge this PR." || echo "PR creation failed - may already exist"
-
-              echo "Continuing build with non-conflicting changes applied"
+              echo ""
+              echo "Upstream SHA: ${UPSTREAM_SHA}"
+              echo "To resolve locally:"
+              echo "  git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly --force"
+              echo "  git merge ${UPSTREAM_SHA}"
+              echo "  # keep BOTH sides - these conflicts are usually disjoint additions"
+              echo "  git push origin nightly-builds-with-bc"
+              exit 1
             fi
           fi
 
