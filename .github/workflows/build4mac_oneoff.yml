@@ -315,7 +315,7 @@ jobs:
           echo "--- Identities visible to codesign ---"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
           echo "--- End diagnostics ---"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           codesign --keychain "$KEYCHAIN_PATH" --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app
 
