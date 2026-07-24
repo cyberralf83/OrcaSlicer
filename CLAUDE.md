@@ -19,6 +19,7 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
 - Keep the diff from upstream as minimal as possible. Fork-only tests go in `tests/libslic3r/test_config_fork.cpp` (registered in that suite's CMakeLists.txt), NEVER in upstream-owned test files — upstream test files must stay byte-identical to upstream so scheduled merges don't conflict. Same rule for `AGENTS.md`: it is upstream's file; fork context lives only in `CLAUDE.md`.
 - **GitHub fork:** `cyberralf83/OrcaSlicer`, branch `nightly-builds-with-bc`
 - Always use `-R cyberralf83/OrcaSlicer` with `gh` CLI commands (workflows, issues, PRs, etc.)
+- `.gitignore` carries a few fork-only entries appended after upstream's
 
 ### Bambu Connect Plugin
 
@@ -34,7 +35,7 @@ Flow: Slice -> "Send to BC" button -> export 3MF -> URL-encode path/name -> open
 
 A custom fork feature (beyond the Bambu Connect plugin) that enforces a **minimum droppable chute "poop"** on BBL AMS colour changes. Process-scoped (Print Settings preset, "Flush options" optgroup), BBL-only, `coFloat` in **mm of filament feed**, default `0` = off. Touches `PrintConfig.cpp/hpp`, `Preset.cpp` (whitelist: in `s_Preset_print_options`), `GCode.cpp`, `Print.cpp` (invalidation), `Tab.cpp`, `ConfigManipulation.cpp`, `Plater.cpp`.
 
-**Why it exists — the starvation regime stock Orca does NOT cover.** On BBL the chute purge volume is decided in `GCode.cpp:885-888`:
+**Why it exists — the starvation regime stock Orca does NOT cover.** On BBL the chute purge volume is decided in `GCode.cpp:1096-1099`:
 ```cpp
 float purge_volume = (tcr.purge_volume < EPSILON)
     ? (apply_chute_min ? std::max(min_chute_purge, g_min_purge_volume) : 0.f)

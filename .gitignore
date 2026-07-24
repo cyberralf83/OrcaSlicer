@@ -46,6 +46,9 @@ test.js
 internal_docs/
 *.flatpak
 /flatpak-repo/
+# Python bytecode
+__pycache__/
+*.pyc
 .claude/worktrees/beam-interlocking-enhancements/
 
 # Superpowers brainstorm visual-companion artifacts
