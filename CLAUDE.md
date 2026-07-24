@@ -135,7 +135,7 @@ Build scripts for CI/release are at the repo root: `build_linux.sh`, `build_rele
 
 ### Testing
 
-Tests use Catch2 v2 (`#include <catch2/catch.hpp>`). Must be enabled with `BUILD_TESTS=ON`.
+Tests use Catch2 v3 (`#include <catch2/catch_all.hpp>`). Must be enabled with `BUILD_TESTS=ON`.
 
 ```bash
 # Run all tests
@@ -151,7 +151,7 @@ cd build && ctest --test-dir tests -L "Http|PlaceholderParser" --output-on-failu
 ```
 
 Test structure:
-- `tests/libslic3r/` - Core library tests (21 files): geometry, algorithms, file formats
+- `tests/libslic3r/` - Core library tests (35 files): geometry, algorithms, file formats
 - `tests/fff_print/` - FFF print tests (16 files): slicing, G-code, fill patterns, supports
 - `tests/sla_print/` - SLA tests: support generation, slicing
 - `tests/libnest2d/` - 2D nesting algorithm tests
