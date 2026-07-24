@@ -614,6 +614,8 @@ void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, P
             float leftover = 0.0f;
             for (size_t i = additional_buffer_idx; i < additional_buffer.size(); ++i)
                 leftover += additional_buffer[i].second;
+            BOOST_LOG_TRIVIAL(debug) << "calculate_time(is_final): leftover=" << leftover
+                << "s from " << (additional_buffer.size() - additional_buffer_idx) << " items";
             time += double(leftover);
             gcode_time.cache += leftover;
         } else {
@@ -3492,6 +3494,7 @@ void GCodeProcessor::reset()
     m_extruder_blocks.clear();
     m_machine_start_gcode_end_line_id = (unsigned int) (-1);
     m_machine_end_gcode_start_line_id = (unsigned int) (-1);
+    m_skip_end_gcode_delays = false;
     m_remaining_volume = std::vector<float>(MAXIMUM_EXTRUDER_NUMBER, 0.f);
 
     m_line_id = 0;
@@ -4216,6 +4219,14 @@ void GCodeProcessor::process_tags(const std::string_view comment, bool producers
 
     if (boost::starts_with(comment, GCodeProcessor::VFlush_End_Tag)) {
         m_virtual_flushing = false;
+        return;
+    }
+
+    // End gcode marker: skip post-print M400 S/P dwells after this point so the M73 estimate reports
+    // print-completion time, not post-print filtration/cooldown. BBS drops the same remainder in
+    // calculate_time(is_final).
+    if (comment == Machine_End_GCode_Start_Tag) {
+        m_skip_end_gcode_delays = true;
         return;
     }
 
@@ -6401,6 +6412,10 @@ void GCodeProcessor::process_M400(const GCodeReader::GCodeLine& line)
     float value_p = 0.0;
     if (line.has_value('S', value_s) || line.has_value('P', value_p)) {
         value_s += value_p * 0.001;
+        // Skip post-print end-gcode dwells so they don't inflate the M73 estimate (see
+        // m_skip_end_gcode_delays). Only omits dwell time — no state is updated here.
+        if (m_skip_end_gcode_delays)
+            return;
         simulate_st_synchronize(value_s);
     }
 }
@@ -6551,8 +6566,11 @@ void GCodeProcessor::process_T(const std::string_view command, int nozzle_id)
     if (command.length() > 1) {
         if (eid < 0 || eid > 254) {
             //BBS: T255, T1000 and T1100 is used as special command for BBL machine and does not cost time. return directly
+            // Orca: T1001 (hotend-type detection) and T65535/T65279 (AMS unload virtual-tool selects, paired with
+            // M620/M621 S65535/S65279) are firmware opcodes emitted verbatim by BBL machine start/end g-code, not
+            // real tool changes - whitelist them so the time estimator stops flagging these valid lines.
             if ((m_flavor == gcfMarlinLegacy || m_flavor == gcfMarlinFirmware) && (command == "Tx" || command == "Tc" || command == "T?" ||
-                 eid == 1000 || eid == 1100 || eid == 255))
+                 eid == 1000 || eid == 1100 || eid == 255 || eid == 1001 || eid == 65279 || eid == 65535))
                 return;
 
             // T-1 is a valid gcode line for RepRap Firmwares (used to deselects all tools)

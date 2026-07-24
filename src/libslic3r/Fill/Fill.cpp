@@ -57,6 +57,9 @@ double calculate_infill_rotation_angle(const PrintObject* object,
     if (template_string.empty()) {
         return Geometry::deg2rad(fixed_infill_angle);
     }
+    // Convert the id to an index. Layer::id() counts the raft layers, object->layers() does not.
+    const size_t first_object_layer_id = object->get_layer(0)->id();
+    layer_id = layer_id > first_object_layer_id ? layer_id - first_object_layer_id : 0;
     double             angle = 0.0;
     ConfigOptionFloats rotate_angles;
     const std::string  search_string = "/NnZz$LlUuQq~^|#";
@@ -75,6 +78,8 @@ double calculate_infill_rotation_angle(const PrintObject* object,
         double angle_start  = 0;
         double limit_fill_z = object->get_layer(0)->bottom_z();
         double start_fill_z = limit_fill_z;
+        // The raft height, or 0 without a raft.
+        const double print_z_offset = object->slicing_parameters().object_print_z_min;
         bool   _noop        = false;
         auto              fill_form = std::string::npos;
         bool              _absolute = false;
@@ -84,7 +89,8 @@ double calculate_infill_rotation_angle(const PrintObject* object,
         for (int i = 0; i <= layer_id; i++) {
             double fill_z = object->get_layer(i)->bottom_z();
 
-            if (limit_fill_z < object->get_layer(i)->slice_z) {
+            // slice_z is measured from the bottom of the model, limit_fill_z from the build plate.
+            if (limit_fill_z < object->get_layer(i)->slice_z + print_z_offset) {
                 if (repeats) { // if repeats >0 then restore parameters for new iteration
                     limit_fill_z += limit_fill_z - start_fill_z;
                     start_fill_z = fill_z;
@@ -272,9 +278,11 @@ struct SurfaceFillParams
     // For Gyroid: when true, use the parameterized "optimized" wave.
     bool gyroid_optimized = false;
 
-    bool                   anisotropic_surfaces{false};
     CenterOfSurfacePattern center_of_surface_pattern{CenterOfSurfacePattern::Each_Surface};
     bool                   separated_infills{false};
+
+    // Orca: forced print order of surface fill loops/fragments for center-based patterns.
+    SurfaceFillOrder fill_order = SurfaceFillOrder::Default;
 
 	bool operator<(const SurfaceFillParams &rhs) const {
 #define RETURN_COMPARE_NON_EQUAL(KEY) if (this->KEY < rhs.KEY) return true; if (this->KEY > rhs.KEY) return false;
@@ -308,9 +316,9 @@ struct SurfaceFillParams
 		RETURN_COMPARE_NON_EQUAL(skin_infill_depth);
         RETURN_COMPARE_NON_EQUAL(infill_overhang_angle);
 		RETURN_COMPARE_NON_EQUAL(gyroid_optimized);
-        RETURN_COMPARE_NON_EQUAL(anisotropic_surfaces);
         RETURN_COMPARE_NON_EQUAL(center_of_surface_pattern);
         RETURN_COMPARE_NON_EQUAL(separated_infills);
+		RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, fill_order);
 
 		return false;
 	}
@@ -337,10 +345,10 @@ struct SurfaceFillParams
 				this->infill_lock_depth       == rhs.infill_lock_depth       &&
 				this->skin_infill_depth       == rhs.skin_infill_depth       &&
                 this->infill_overhang_angle   == rhs.infill_overhang_angle   &&
-                this->anisotropic_surfaces    == rhs.anisotropic_surfaces &&
                 this->center_of_surface_pattern == rhs.center_of_surface_pattern &&
                 this->separated_infills       == rhs.separated_infills &&
-                this->gyroid_optimized        == rhs.gyroid_optimized;
+                this->gyroid_optimized        == rhs.gyroid_optimized        &&
+                this->fill_order              == rhs.fill_order;
 	}
 };
 
@@ -879,7 +887,6 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                 params.lateral_lattice_angle_1 = region_config.lateral_lattice_angle_1;
                 params.lateral_lattice_angle_2 = region_config.lateral_lattice_angle_2;
                 params.infill_overhang_angle = region_config.infill_overhang_angle;
-                params.anisotropic_surfaces = region_config.anisotropic_surfaces;
                 params.center_of_surface_pattern = region_config.center_of_surface_pattern;
                 params.separated_infills = region_config.separated_infills;
                 if (params.pattern == ipLockedZag) {
@@ -936,6 +943,14 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                     params.extruder = region_config.bottom_surface_filament_id;
                 else if (params.extrusion_role == erSolidInfill)
                     params.extruder = region_config.internal_solid_filament_id;
+                // Orca: forced fill order applies only to top/bottom surfaces filled with a
+                // center-based pattern; everything else stays at Default to keep batching together.
+                if (params.pattern == ipConcentric || params.pattern == ipArchimedeanChords || params.pattern == ipOctagramSpiral) {
+                    if (params.extrusion_role == erTopSolidInfill)
+                        params.fill_order = region_config.top_surface_fill_order.value;
+                    else if (params.extrusion_role == erBottomSurface)
+                        params.fill_order = region_config.bottom_surface_fill_order.value;
+                }
                 // Orca: apply fill multiline only for sparse infill
                 params.multiline = params.extrusion_role == erInternalInfill ? int(region_config.fill_multiline) : 1;
 
@@ -1322,12 +1337,12 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
         auto &region_config = layerm->region().config();
         params.config               = &region_config;
         params.pattern              = surface_fill.params.pattern;
+        params.fill_order           = surface_fill.params.fill_order;
 
         // Orca: Checking the filling of a centered surface by drawing for each model parts
         bool is_top_or_bottom = params.extrusion_role == erTopSolidInfill || params.extrusion_role == erBottomSurface;
         bool is_centered_infill = surface_fill.params.pattern == ipArchimedeanChords || surface_fill.params.pattern == ipOctagramSpiral;
         if (is_top_or_bottom) {
-            params.is_anisotropic            = surface_fill.params.anisotropic_surfaces;      // Orca: anisotropic surfaces
             params.center_of_surface_pattern = surface_fill.params.center_of_surface_pattern; // Orca: center of surface pattern
         }
         // Orca: Each_Model centers the pattern on each model part's bbox; Each_Surface / Each_Assembly

@@ -2433,6 +2433,9 @@ void PartPlate::set_pos_and_size(Vec3d& origin, int width, int depth, int height
 	m_depth = depth;
 	m_height = height;
 
+	if (with_instance_move && m_plater)
+		m_plater->mark_plate_toolbar_image_dirty();
+
 	return;
 }
 
@@ -2659,7 +2662,8 @@ bool PartPlate::check_outside(int obj_id, int instance_id, BoundingBoxf3* boundi
 
 	if (instance_box.min.z() < SINKING_Z_THRESHOLD) {
 		// Orca: For sinking object, we use a more expensive algorithm so part below build plate won't be considered
-		if (plate_box.intersects(instance_box)) {
+		// m_plater is null in CLI mode.
+		if (m_plater && plate_box.intersects(instance_box)) {
 			// TODO: FIXME: this does not take exclusion area into account
             const BuildVolume build_volume(get_shape(), m_plater->build_volume().printable_height(), m_extruder_areas, m_extruder_heights);
 			const auto state = instance->calc_print_volume_state(build_volume);
@@ -2780,6 +2784,8 @@ int PartPlate::add_instance(int obj_id, int instance_id, bool move_position, Bou
 	}
 
 	BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": plate %1% , m_ready_for_slice changes to %2%") % m_plate_index %m_ready_for_slice;
+	if (m_plater)
+		m_plater->mark_plate_toolbar_image_dirty();
 	return 0;
 }
 
@@ -5344,6 +5350,9 @@ int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 		unprintable_plate.update_object_index(obj_id, m_model->objects.size());
 	}
 
+	if (m_plater)
+		m_plater->mark_plate_toolbar_image_dirty();
+
 	return 0;
 }
 
@@ -6264,6 +6273,9 @@ int PartPlateList::rebuild_plates_after_arrangement(bool recycle_plates, bool ex
 		wxGetApp().obj_list()->reload_all_plates();
 	}
 #endif
+
+	if (m_plater)
+		m_plater->mark_plate_toolbar_image_dirty();
 
 	BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":after rebuild, plates count %1%") % m_plate_list.size();
 	return ret;
