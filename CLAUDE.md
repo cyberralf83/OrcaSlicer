@@ -9,9 +9,14 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
 ## This Fork
 
 - Tracks upstream OrcaSlicer (`SoftFever/OrcaSlicer`) nightly builds, merged every few days
-- The **only** custom code is a Bambu Connect export plugin and the CI workflow to build it
-- **Do NOT make changes unrelated to the Bambu Connect plugin**
-- Keep the diff from upstream as minimal as possible
+- Custom code is limited to five fork features plus the CI workflows to build them:
+  1. **Bambu Connect export plugin** (see below)
+  2. **Minimum Chute Flush** — `minimal_chute_flush_length` (see below)
+  3. **Seam hide at part interface** — `seam_hide_at_interface`, `seam_interface_depth`, `seam_interface_skip_bottom_layers`; decision logic in `SeamPlacerImpl::seam_point_is_embedded_enough` (SeamPlacer.cpp/hpp)
+  4. **Flush-into-infill minimum layer** — `flush_into_infill_min_layer` gate in `ToolOrdering.cpp` (+ PrintConfig/Preset/PrintObject/Tab/ConfigManipulation/GUI_Factories)
+  5. **Interlocking beam controls** — `interlocking_boundary_avoidance_z`, `interlocking_beam_bidirectional`, `interlocking_beam_skip_layers`, `interlocking_beam_group_count`, `interlocking_beam_gap` in `Feature/Interlocking/InterlockingGenerator.cpp/hpp`
+- **Do NOT make changes unrelated to these features**
+- Keep the diff from upstream as minimal as possible. Fork-only tests go in `tests/libslic3r/test_config_fork.cpp` (registered in that suite's CMakeLists.txt), NEVER in upstream-owned test files — upstream test files must stay byte-identical to upstream so scheduled merges don't conflict. Same rule for `AGENTS.md`: it is upstream's file; fork context lives only in `CLAUDE.md`.
 - **GitHub fork:** `cyberralf83/OrcaSlicer`, branch `nightly-builds-with-bc`
 - Always use `-R cyberralf83/OrcaSlicer` with `gh` CLI commands (workflows, issues, PRs, etc.)
 
