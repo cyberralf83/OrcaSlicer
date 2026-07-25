@@ -317,10 +317,41 @@ jobs:
           echo "--- End diagnostics ---"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          codesign --keychain "$KEYCHAIN_PATH" --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app
+          # codesign --deep is deprecated and cannot sign the bundled Python
+          # runtime (see relocate_python_runtime in build_release_macos.sh).
+          # Sign every nested Mach-O in the bundle explicitly -- notarization
+          # requires the hardened-runtime signature on each -- then seal the
+          # bundle itself last, and verify so coverage gaps fail at CI time
+          # rather than at notarization.
+          ENTITLEMENTS=${{ github.workspace }}/scripts/disable_validation.entitlements
+          sign() {
+            codesign --keychain "$KEYCHAIN_PATH" --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$CERTIFICATE_ID" "$@"
+          }
+          sign_app() {
+            local app="$1"
+            local machos=()
+            # file is batched via xargs (per-file it costs minutes); universal
+            # binaries also print per-architecture lines, dropped by grep -v.
+            while IFS= read -r f; do machos+=("$f"); done < <(
+              find "$app" -type f -print0 |
+                xargs -0 file --no-pad --mime-type -- |
+                grep -v ' (for architecture ' |
+                grep ': application/x-mach-binary$' |
+                sed 's|: application/x-mach-binary$||'
+            )
+            if [ "${#machos[@]}" -eq 0 ]; then
+              echo "ERROR: no Mach-O files found in $app -- detection is broken" >&2
+              exit 1
+            fi
+            echo "signing ${#machos[@]} Mach-O files in $app"
+            sign "${machos[@]}"
+            sign --verbose "$app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+          }
+          sign_app "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app"
 
           if [ -f "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
-            codesign --keychain "$KEYCHAIN_PATH" --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app
+            sign_app "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app"
           fi
 
           mkdir -p ${{ github.workspace }}/build/arm64/OrcaSlicer_dmg
