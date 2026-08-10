@@ -3295,15 +3295,6 @@ void Sidebar::update_all_preset_comboboxes()
 
     }
 
-    // FORK(bambu-connect): on BBL printers the side print button defaults to "Send to BC" instead of
-    // upstream's "Print plate". Kept as a standalone override after the branches above - upstream keeps
-    // rewriting its own default-selection lines, and editing them in place made every nightly merge
-    // conflict. Condition mirrors the two upstream sites it replaces: the BBL-network branch, and the
-    // host-configured path of the else branch.
-    if (preset_bundle.is_bbl_vendor() &&
-        (preset_bundle.use_bbl_network() || !PrintHost::get_print_host_webui(&cfg).empty()))
-        p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::eSendBambuConnect);
-
     if (cfg.opt_bool("pellet_modded_printer")) {
 		p->m_staticText_filament_settings->SetLabel(_L("Pellets"));
         p->m_filament_icon->SetBitmap_("pellets");
@@ -3311,6 +3302,15 @@ void Sidebar::update_all_preset_comboboxes()
 		p->m_staticText_filament_settings->SetLabel(_L("Filament"));
         p->m_filament_icon->SetBitmap_("filament");
     }
+
+    // FORK(bambu-connect): on BBL printers the side print button defaults to "Send to BC" instead of
+    // upstream's "Print plate". Deliberately parked here, well clear of the print-button branches above -
+    // that block is upstream's hottest code in this file and editing it in place conflicted on nearly
+    // every nightly merge. Condition mirrors the two upstream sites it overrides: the BBL-network branch,
+    // and the host-configured path of the else branch. Nothing between here and there touches the button.
+    if (preset_bundle.is_bbl_vendor() &&
+        (preset_bundle.use_bbl_network() || !PrintHost::get_print_host_webui(&cfg).empty()))
+        p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::eSendBambuConnect);
 
     show_SEMM_buttons();
 

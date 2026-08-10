@@ -17,7 +17,8 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
   5. **Interlocking beam controls** — `interlocking_boundary_avoidance_z`, `interlocking_beam_bidirectional`, `interlocking_beam_skip_layers`, `interlocking_beam_group_count`, `interlocking_beam_gap` in `Feature/Interlocking/InterlockingGenerator.cpp/hpp`
 - **Do NOT make changes unrelated to these features**
 - Keep the diff from upstream as minimal as possible. Fork-only tests go in `tests/libslic3r/test_config_fork.cpp` (registered in that suite's CMakeLists.txt), NEVER in upstream-owned test files — upstream test files must stay byte-identical to upstream so scheduled merges don't conflict. Same rule for `AGENTS.md`: it is upstream's file; fork context lives only in `CLAUDE.md`.
-- **Prefer append-only fork changes over in-place edits of upstream lines.** Every nightly-merge conflict so far came from the fork rewriting a line upstream also maintains (AGENTS.md, `test_config.cpp`, then `MainFrame.cpp`/`Plater.cpp`'s print-button defaults). When a fork feature needs to change upstream behaviour, leave upstream's statement byte-identical and add a clearly marked `// FORK(<feature>):` override block after it — git then auto-merges upstream's future edits to that line. Two live examples: the side print-button default in `MainFrame::create_side_tools` (MainFrame.cpp) and the BBL default in `Sidebar::update_all_preset_comboboxes` (Plater.cpp), both of which conflicted repeatedly until they were restructured this way. Where an in-place edit is unavoidable (e.g. the chute purge formula in `GCode.cpp`), keep it as small as possible.
+- **Prefer append-only fork changes over in-place edits of upstream lines, and park them in cold code.** Every nightly-merge conflict so far came from the fork rewriting a line upstream also maintains (AGENTS.md, `test_config.cpp`, then `MainFrame.cpp`/`Plater.cpp`'s print-button defaults). When a fork feature needs to change upstream behaviour: leave upstream's statement byte-identical, and add a clearly marked `// FORK(<feature>):` block that overrides the result — placed as far from upstream's churn as the semantics allow. Live examples: `MainFrame::create_side_tools` and `Sidebar::update_all_preset_comboboxes` (print-button default, moved down past the pellet block into a zone with no upstream commits) and the chute purge floor in `GCode.cpp`. `src/slic3r/GUI/{Plater,MainFrame}.cpp` and `src/libslic3r/GCode.cpp` are now **zero-removal** against upstream — keep them that way.
+- To decide whether a spot is hot before touching it: `git log --format='%h %ad %s' --date=short -L <lo>,<hi>:<file> upstream-nightly` (ignore `3bee58fcab`, a repo-wide reformat that matches every line). The print-button branches in `Plater.cpp` scored 12–18 commits; every other fork-touched region scored 0–2, which is why only those were restructured.
 - **GitHub fork:** `cyberralf83/OrcaSlicer`, branch `nightly-builds-with-bc`
 - Always use `-R cyberralf83/OrcaSlicer` with `gh` CLI commands (workflows, issues, PRs, etc.)
 - `.gitignore` carries a few fork-only entries appended after upstream's
@@ -36,16 +37,17 @@ Flow: Slice -> "Send to BC" button -> export 3MF -> URL-encode path/name -> open
 
 A custom fork feature (beyond the Bambu Connect plugin) that enforces a **minimum droppable chute "poop"** on BBL AMS colour changes. Process-scoped (Print Settings preset, "Flush options" optgroup), BBL-only, `coFloat` in **mm of filament feed**, default `0` = off. Touches `PrintConfig.cpp/hpp`, `Preset.cpp` (whitelist: in `s_Preset_print_options`), `GCode.cpp`, `Print.cpp` (invalidation), `Tab.cpp`, `ConfigManipulation.cpp`, `Plater.cpp`.
 
-**Why it exists — the starvation regime stock Orca does NOT cover.** On BBL the chute purge volume is decided in `GCode.cpp:1096-1099`:
+**Why it exists — the starvation regime stock Orca does NOT cover.** On BBL the chute purge volume is decided in `GCode.cpp` (~line 1159), where upstream's line is left byte-identical and the fork raises the result afterwards:
 ```cpp
-float purge_volume = (tcr.purge_volume < EPSILON)
-    ? (apply_chute_min ? std::max(min_chute_purge, g_min_purge_volume) : 0.f)
-    : (apply_chute_min ? std::max({tcr.purge_volume, g_min_purge_volume, min_chute_purge})
-                       : std::max(tcr.purge_volume, g_min_purge_volume));
+float purge_volume = tcr.purge_volume < EPSILON ? 0 : std::max(tcr.purge_volume, g_min_purge_volume); // upstream
+// FORK(min-chute-flush):
+if (is_real_toolchange && min_chute_purge > EPSILON && gcodegen.is_BBL_Printer())
+    purge_volume = std::max({purge_volume, min_chute_purge, g_min_purge_volume});
 ```
-- `g_min_purge_volume = 100.f` (GCode.cpp:92) is the **upstream** Bambu floor (committed 2022, present in stock Orca) — NOT fork code. It only lives in the `≥ EPSILON` branch.
+- `g_min_purge_volume = 100.f` (GCode.cpp:94) is the **upstream** Bambu floor (committed 2022, present in stock Orca) — NOT fork code. In upstream's line it applies only in the `≥ EPSILON` branch.
 - `min_chute_purge = minimal_chute_flush_length × filament_area` (1.75 mm filament ⇒ `area ≈ 2.405 mm³/mm`).
-- `apply_chute_min = is_real_toolchange && min_chute_purge > EPSILON && is_BBL_Printer()`.
+- `is_real_toolchange = tcr.is_tool_change && tcr.initial_tool != tcr.new_tool`.
+- The override is equivalent to the earlier in-place rewrite of upstream's line, case for case; it was restructured purely to stop conflicting on nightly merges.
 
 **Flush-into-infill** (`mark_wiping_extrusions`, ToolOrdering.cpp) diverts purge into object infill *first*, shrinking `tcr.purge_volume`. When it absorbs ~everything, `tcr.purge_volume < EPSILON` → with the feature **off** the top branch returns **`0.f`** — the 100 mm³ floor is **bypassed, not applied**. Result: no real poop, only ooze/stringing (a thin ~30–40 mm × ~0.4 mm wisp ≈ 4–5 mm³) that clings to the nozzle instead of dropping. This is the real-world failure that motivated the feature; the feature is the **only** path that lifts those bypassed-to-0 changes back to a droppable ≥100 mm³ coil.
 

@@ -1156,22 +1156,22 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                 int new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(new_fi) : full_config.nozzle_temperature.get_at(new_fi);
                 Vec3d nozzle_pos = gcode_writer.get_position();
 
-                // ORCA: Enforce a global minimum chute flush ("poop"). The option is a global filament
-                // length (mm); convert it to the per-filament purge volume (mm³) the rest of this block
-                // works in, using the incoming filament's cross-sectional area.
-                // When most of the tool-change flush is diverted into object infill, tcr.purge_volume can
-                // fall to ~0, leaving a poop too small to drop free of the nozzle (it sticks). The floor
-                // applies only on real colour changes on BBL chute printers (matching the BBL-only UI);
-                // every other case keeps the original behaviour so we never emit spurious purge.
+                float purge_volume = tcr.purge_volume < EPSILON ? 0 : std::max(tcr.purge_volume, g_min_purge_volume);
                 float filament_area = float((M_PI / 4.f) * pow(full_config.filament_diameter.get_at(new_filament_id), 2));
-                const float min_chute_length   = (float) full_config.minimal_chute_flush_length.value;
-                const float min_chute_purge    = min_chute_length * filament_area; // mm of filament -> mm³
+
+                // FORK(min-chute-flush): enforce a global minimum chute flush ("poop"). The option is a
+                // filament length (mm); convert it to the purge volume (mm³) this block works in using the
+                // incoming filament's cross-section. When most of the tool-change flush is diverted into
+                // object infill, tcr.purge_volume falls to ~0 and the line above yields 0 - a poop too
+                // small to drop free of the nozzle (it sticks). Raising purge_volume here instead of
+                // rewriting the line above keeps upstream's statement byte-identical, so upstream edits to
+                // it keep auto-merging. Applies only to real colour changes on BBL chute printers
+                // (matching the BBL-only UI); every other case keeps upstream behaviour untouched.
+                const float min_chute_purge    = (float) full_config.minimal_chute_flush_length.value * filament_area;
                 const bool  is_real_toolchange = tcr.is_tool_change && tcr.initial_tool != tcr.new_tool;
-                const bool  apply_chute_min    = is_real_toolchange && min_chute_purge > EPSILON && gcodegen.is_BBL_Printer();
-                float purge_volume = (tcr.purge_volume < EPSILON)
-                    ? (apply_chute_min ? std::max(min_chute_purge, g_min_purge_volume) : 0.f)
-                    : (apply_chute_min ? std::max({tcr.purge_volume, g_min_purge_volume, min_chute_purge})
-                                       : std::max(tcr.purge_volume, g_min_purge_volume));
+                if (is_real_toolchange && min_chute_purge > EPSILON && gcodegen.is_BBL_Printer())
+                    purge_volume = std::max({purge_volume, min_chute_purge, g_min_purge_volume});
+
                 float purge_length = purge_volume / filament_area;
 
                 int old_filament_e_feedrate = (old_filament_id != -1) ? (int)(60.0 * full_config.filament_max_volumetric_speed.get_at(old_fi) / filament_area) : 200;
