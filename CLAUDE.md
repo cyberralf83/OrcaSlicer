@@ -17,6 +17,7 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
   5. **Interlocking beam controls** — `interlocking_boundary_avoidance_z`, `interlocking_beam_bidirectional`, `interlocking_beam_skip_layers`, `interlocking_beam_group_count`, `interlocking_beam_gap` in `Feature/Interlocking/InterlockingGenerator.cpp/hpp`
 - **Do NOT make changes unrelated to these features**
 - Keep the diff from upstream as minimal as possible. Fork-only tests go in `tests/libslic3r/test_config_fork.cpp` (registered in that suite's CMakeLists.txt), NEVER in upstream-owned test files — upstream test files must stay byte-identical to upstream so scheduled merges don't conflict. Same rule for `AGENTS.md`: it is upstream's file; fork context lives only in `CLAUDE.md`.
+- **Prefer append-only fork changes over in-place edits of upstream lines.** Every nightly-merge conflict so far came from the fork rewriting a line upstream also maintains (AGENTS.md, `test_config.cpp`, then `MainFrame.cpp`/`Plater.cpp`'s print-button defaults). When a fork feature needs to change upstream behaviour, leave upstream's statement byte-identical and add a clearly marked `// FORK(<feature>):` override block after it — git then auto-merges upstream's future edits to that line. Two live examples: the side print-button default in `MainFrame::create_side_tools` (MainFrame.cpp) and the BBL default in `Sidebar::update_all_preset_comboboxes` (Plater.cpp), both of which conflicted repeatedly until they were restructured this way. Where an in-place edit is unavoidable (e.g. the chute purge formula in `GCode.cpp`), keep it as small as possible.
 - **GitHub fork:** `cyberralf83/OrcaSlicer`, branch `nightly-builds-with-bc`
 - Always use `-R cyberralf83/OrcaSlicer` with `gh` CLI commands (workflows, issues, PRs, etc.)
 - `.gitignore` carries a few fork-only entries appended after upstream's
@@ -67,6 +68,11 @@ Two macOS workflows, both producing signed + notarized DMGs published to the `ni
 - Creates a DMG and publishes the release
 
 **`.github/workflows/build4mac_local.yml`** — runs on schedule (every 4 days at 2 AM UTC) or manual trigger; routes to a self-hosted Mac ARM64 runner if one is online + idle, otherwise falls back to `macos-14`. Same final output as the cloud workflow. The `pick-runner` job probes `repos/cyberralf83/OrcaSlicer/actions/runners` via `PAT_TOKEN`. Cache is split into `actions/cache/restore` + `actions/cache/save@v4` with `if: always()` so the 1-hour deps build is preserved even if a later step fails.
+
+**The `Fetch and merge upstream nightly-builds` step is identical in both workflows — keep them in sync.** Its contract:
+- Never auto-resolves. On conflict it aborts, pushes nothing, and fails the run (deliberate: an earlier `git checkout --ours` version silently discarded upstream code and still went green). The failure writes a job summary listing conflicted files, hunk counts, the upstream commits that touched them, and the resolve commands.
+- Verifies the fork's feature markers (`eSendBambuConnect`, `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT`, `on_action_send_bamcu_conect`, `minimal_chute_flush_length`, `seam_hide_at_interface`, `flush_into_infill_min_layer`, `interlocking_beam_bidirectional`) still exist in the merged tree before committing — a clean merge that drops fork code is aborted too. Add a marker here when adding a fork feature.
+- Retries the upstream tag fetch (3×) so a network blip doesn't kill the build, clears a stale `MERGE_HEAD` left by a killed run on the self-hosted runner, and redoes the merge on top of the new tip if the push races another push (3 rounds).
 
 ### Self-hosted runner setup (Mac ARM64)
 

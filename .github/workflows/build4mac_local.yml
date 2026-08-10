@@ -97,56 +97,81 @@ jobs:
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: nightly-builds-with-bc
         run: |
-          set -x  # Enable command echoing
+          set -uo pipefail
+
+          # Fork features that must survive every upstream merge. If a marker is gone from the
+          # merged tree, the merge silently ate fork code - abort and push nothing.
+          FORK_MARKERS="\
+          eSendBambuConnect|src/slic3r/GUI/MainFrame.hpp
+          EVT_GLTOOLBAR_SEND_BAMBU_CONNECT|src/slic3r/GUI/GLToolbar.hpp
+          on_action_send_bamcu_conect|src/slic3r/GUI/Plater.cpp
+          minimal_chute_flush_length|src/libslic3r/PrintConfig.cpp
+          seam_hide_at_interface|src/libslic3r/PrintConfig.cpp
+          flush_into_infill_min_layer|src/libslic3r/PrintConfig.cpp
+          interlocking_beam_bidirectional|src/libslic3r/PrintConfig.cpp"
+
+          summary() { [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "$1" >> "$GITHUB_STEP_SUMMARY"; return 0; }
+
+          # Retry network operations - a transient fetch/push failure should not kill a 1h build.
+          retry() {
+            local attempts=$1 delay=$2 i=1; shift 2
+            until "$@"; do
+              if [ "$i" -ge "$attempts" ]; then
+                echo "Command failed after ${attempts} attempts: $*" >&2
+                return 1
+              fi
+              echo "Attempt ${i}/${attempts} failed, retrying in ${delay}s: $*"
+              sleep "$delay"; i=$((i + 1))
+            done
+          }
 
           echo "=== Configuring Git user ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          echo "=== Configuring Git remote with PAT ==="
-          # First, show the current remote URL (will be sanitized in logs)
-          echo "Current origin URL:"
-          git remote get-url origin
-
-          # Remove the trailing .git if it exists in the repository name
-          REPO_URL="https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}"
-
-          # Set the new URL with PAT token (without .git extension to match checkout)
-          git remote set-url origin "${REPO_URL}"
-
-          # Verify it was set (GitHub Actions will automatically sanitize the token in logs)
-          echo "Updated origin URL (token will be hidden):"
-          git remote get-url origin
-
-          # Configure git credential helper to use the token stored in memory
+          echo "=== Configuring remotes ==="
+          git remote set-url origin "https://x-access-token:${PAT_TOKEN}@github.com/${REPO}"
           git config --local --unset-all credential.helper || true
           git config --local credential.helper '!f() { echo "username=x-access-token"; echo "password=${PAT_TOKEN}"; }; f'
+          git remote add upstream https://github.com/SoftFever/OrcaSlicer.git 2>/dev/null \
+            || git remote set-url upstream https://github.com/SoftFever/OrcaSlicer.git
 
-          echo "=== Adding upstream remote ==="
-          git remote add upstream https://github.com/SoftFever/OrcaSlicer.git || true
+          # A previous run killed mid-merge (cancelled job, runner reboot) can leave MERGE_HEAD
+          # behind on a self-hosted runner. Clear it so this run starts from a clean state.
+          if [ -e .git/MERGE_HEAD ] || [ -e .git/rebase-merge ] || [ -e .git/rebase-apply ]; then
+            echo "Stale in-progress merge/rebase found - clearing"
+            git merge --abort 2>/dev/null || true
+            git rebase --abort 2>/dev/null || true
+          fi
+          git reset --hard HEAD --quiet
 
           echo "=== Fetching upstream nightly-builds tag ==="
-          git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly
+          retry 3 20 git fetch --force upstream refs/tags/nightly-builds:refs/tags/upstream-nightly || {
+            echo "::error::Could not fetch the upstream nightly-builds tag (3 attempts). Network or GitHub outage."
+            summary "## Upstream merge failed"
+            summary "Could not fetch \`SoftFever/OrcaSlicer\` tag \`nightly-builds\` after 3 attempts - treat as a network/GitHub issue and re-run."
+            exit 1
+          }
 
-          echo "=== Getting upstream SHA ==="
           UPSTREAM_SHA=$(git rev-parse upstream-nightly)
           echo "Upstream nightly-builds SHA: ${UPSTREAM_SHA}"
 
-          echo "=== Checking if already merged ==="
-          if git merge-base --is-ancestor ${UPSTREAM_SHA} HEAD; then
-            echo "Already up to date with upstream"
-          else
-            echo "=== Attempting merge ==="
-            if git merge ${UPSTREAM_SHA} --no-commit --no-ff; then
-              echo "=== Clean merge detected - committing ==="
-              git commit -m "Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"
+          if git merge-base --is-ancestor "${UPSTREAM_SHA}" HEAD; then
+            echo "Already up to date with upstream (${UPSTREAM_SHA:0:8})"
+            summary "## Upstream merge"
+            summary "Already up to date with upstream \`${UPSTREAM_SHA:0:8}\` - building the current branch state."
+            exit 0
+          fi
 
-              echo "=== Pushing to nightly-builds-with-bc ==="
-              git push origin nightly-builds-with-bc
-              echo "Merge successful"
-            else
-              echo "=== Merge conflicts detected ==="
+          # Up to 3 rounds: a round is only retried when the push races another push to the
+          # branch, in which case we resync onto the new tip and redo the merge from there.
+          MERGED=0
+          for round in 1 2 3; do
+            echo "=== Merging upstream ${UPSTREAM_SHA:0:8} into ${BRANCH} (round ${round}) ==="
+            if ! git merge "${UPSTREAM_SHA}" --no-commit --no-ff; then
               CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
 
               # Do NOT auto-resolve. This previously ran `git checkout --ours` on every
@@ -154,23 +179,100 @@ jobs:
               # result to nightly-builds-with-bc, and still exited green. Each merge then
               # started from that poisoned state and lost more upstream code. Abort
               # instead: nothing is pushed, nothing is lost, and a human resolves it.
-              git merge --abort
-
               echo "::error::Upstream merge conflict - branch NOT updated, nothing pushed. Resolve locally, then re-run."
+              summary "## Upstream merge conflict"
+              summary ""
+              summary "Nothing was pushed and no build ran. Branch \`${BRANCH}\` is untouched."
+              summary ""
+              summary "Upstream tag \`nightly-builds\` = \`${UPSTREAM_SHA}\`"
+              summary ""
+              summary "### Conflicted files"
               echo "Conflicted files:"
-              echo "$CONFLICTED_FILES"
+              while IFS= read -r f; do
+                [ -n "$f" ] || continue
+                HUNKS=$(grep -c '^<<<<<<< ' "$f" 2>/dev/null || true)
+                echo "  ${f} (${HUNKS:-?} conflict hunk(s))"
+                summary "- \`${f}\` - ${HUNKS:-?} conflict hunk(s)"
+              done <<< "${CONFLICTED_FILES}"
+
+              summary ""
+              summary "### Upstream commits touching those files"
+              # shellcheck disable=SC2086
+              UPSTREAM_COMMITS=$(git log --oneline --no-merges -15 HEAD..${UPSTREAM_SHA} -- ${CONFLICTED_FILES} 2>/dev/null)
+              echo "Upstream commits touching those files:"
+              echo "${UPSTREAM_COMMITS}"
+              summary '```'
+              summary "${UPSTREAM_COMMITS:-(none)}"
+              summary '```'
+
+              summary ""
+              summary "### Resolve locally"
+              summary '```bash'
+              summary "git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly --force"
+              summary "git merge ${UPSTREAM_SHA}"
+              summary "# keep BOTH sides - fork changes should be append-only overrides, never in-place"
+              summary "# edits of upstream lines (in-place edits are what makes this conflict recur)"
+              summary "git push origin ${BRANCH}"
+              summary '```'
+
+              git merge --abort
               echo ""
-              echo "Upstream SHA: ${UPSTREAM_SHA}"
               echo "To resolve locally:"
               echo "  git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly --force"
               echo "  git merge ${UPSTREAM_SHA}"
-              echo "  # keep BOTH sides - these conflicts are usually disjoint additions"
-              echo "  git push origin nightly-builds-with-bc"
+              echo "  git push origin ${BRANCH}"
               exit 1
             fi
+
+            echo "=== Verifying fork features survived the merge ==="
+            MISSING=""
+            while IFS='|' read -r marker file; do
+              marker=$(echo "$marker" | tr -d '[:space:]')
+              file=$(echo "$file" | tr -d '[:space:]')
+              [ -n "$marker" ] || continue
+              if ! grep -q "$marker" "$file" 2>/dev/null; then
+                MISSING="${MISSING}  ${marker} (expected in ${file})"$'\n'
+              fi
+            done <<< "${FORK_MARKERS}"
+            if [ -n "${MISSING}" ]; then
+              git merge --abort
+              echo "::error::Merge result is missing fork code - branch NOT updated, nothing pushed."
+              echo "Missing markers:"
+              echo "${MISSING}"
+              summary "## Upstream merge dropped fork code"
+              summary "The merge of \`${UPSTREAM_SHA:0:8}\` resolved cleanly but these fork markers vanished, so it was aborted and nothing was pushed:"
+              summary '```'
+              summary "${MISSING}"
+              summary '```'
+              exit 1
+            fi
+
+            if ! git commit -m "Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"; then
+              echo "::error::git commit of the merge failed - nothing pushed."
+              git merge --abort 2>/dev/null || true
+              exit 1
+            fi
+
+            if git push origin "${BRANCH}"; then
+              MERGED=1
+              break
+            fi
+
+            echo "Push rejected - ${BRANCH} moved while this job was merging. Resyncing and retrying."
+            retry 3 10 git fetch origin "${BRANCH}" || true
+            git reset --hard "origin/${BRANCH}" --quiet
+          done
+
+          if [ "${MERGED}" -ne 1 ]; then
+            echo "::error::Could not push the upstream merge after 3 rounds - branch NOT updated."
+            summary "## Upstream merge could not be pushed"
+            summary "Merged cleanly but \`git push\` kept being rejected (branch moving underneath). Re-run the workflow."
+            exit 1
           fi
 
-          set +x  # Disable command echoing
+          echo "Merge successful"
+          summary "## Upstream merge"
+          summary "Merged upstream \`${UPSTREAM_SHA:0:8}\` into \`${BRANCH}\` and pushed."
 
       - name: Get date and version
         run: |
