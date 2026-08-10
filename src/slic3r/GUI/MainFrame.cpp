@@ -708,7 +708,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             m_print_enable = get_enable_print_status();
             m_print_btn->Enable(m_print_enable);
             if (m_print_enable) {
-                if (wxGetApp().preset_bundle->use_bbl_network())
+                if (wxGetApp().preset_bundle->use_bbl_network() || wxGetApp().app_config->get_bool("use_printer_agents"))
                     wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_PRINT_PLATE));
                 else
                     wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_GCODE));
@@ -1368,9 +1368,88 @@ void MainFrame::init_tabpanel() {
 }
 
 // SoftFever
-void MainFrame::show_device(bool bBBLPrinter) {
+void MainFrame::show_device(bool should_use_native) {
     auto idx = -1;
-    if (bBBLPrinter) {
+
+    const bool use_printer_agents = wxGetApp().app_config->get_bool("use_printer_agents");
+
+    // The legacy page is appended when printer agents are enabled. Remove that
+    // extra page before switching back to the normal native/legacy layout.
+    if (!use_printer_agents) {
+        if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND && idx != tpMonitor) {
+            m_printer_view->Show(false);
+            m_tabpanel->RemovePage(idx);
+        }
+    }
+
+    if (use_printer_agents) {
+        if (!m_monitor) {
+            m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+            m_monitor->SetBackgroundColour(*wxWHITE);
+        }
+
+        if (m_tabpanel->FindPage(m_monitor) == wxNOT_FOUND) {
+            if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
+                m_printer_view->Show(false);
+                m_tabpanel->RemovePage(idx);
+            }
+            m_monitor->Show(false);
+            m_tabpanel->InsertPage(tpMonitor, m_monitor, _L("Device"), std::string("tab_monitor_active"),
+                                   std::string("tab_monitor_active"));
+        }
+
+        if (m_printer_view == nullptr) {
+            m_printer_view = new PrinterWebView(m_tabpanel);
+            Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent& evt) {
+                wxString url = evt.GetString();
+                wxString key = evt.GetAPIkey();
+                // select_tab(MainFrame::tpMonitor);
+                m_printer_view->load_url(url, key);
+            });
+        }
+
+        if (wxGetApp().is_enable_multi_machine()) {
+            if (!m_multi_machine) {
+                m_multi_machine = new MultiMachinePage(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+                m_multi_machine->SetBackgroundColour(*wxWHITE);
+            }
+            // TODO: change the bitmap
+            if (m_tabpanel->FindPage(m_multi_machine) == wxNOT_FOUND) {
+                m_multi_machine->Show(false);
+                m_tabpanel->InsertPage(tpMultiDevice, m_multi_machine, _L("Multi-device"), std::string("tab_multi_active"),
+                                       std::string("tab_multi_active"), false);
+            }
+        }
+        if (!m_calibration) {
+            m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+            m_calibration->SetBackgroundColour(*wxWHITE);
+        }
+        // Calibration is always the last page, so don't use InsertPage here. Otherwise, if multi_machine page is not enabled,
+        // the calibration tab won't be properly added as well, due to the TabPosition::tpCalibration no longer matches the real tab position.
+        if (m_tabpanel->FindPage(m_calibration) == wxNOT_FOUND) {
+            m_calibration->Show(false);
+            m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"),
+                                std::string("tab_calibration_active"), false);
+        }
+
+        if ((idx = m_tabpanel->FindPage(m_printer_view)) == wxNOT_FOUND) {
+            m_printer_view->Show(false);
+            m_tabpanel->AddPage(m_printer_view, _L("Device (legacy)"), std::string("tab_monitor_active"),
+                                std::string("tab_monitor_active"), false);
+        } else {
+            m_tabpanel->SetPageText(idx, _L("Device (legacy)"));
+        }
+
+#ifdef _MSW_DARK_MODE
+        wxGetApp().UpdateDarkUIWin(this);
+#endif // _MSW_DARK_MODE
+
+        fit_tab_labels(); // ORCA on printer change
+
+        return;
+    }
+
+    if (should_use_native) {
         if (m_tabpanel->FindPage(m_monitor) != wxNOT_FOUND) {
             fit_tab_labels(); // ORCA on printer change - same button layout
             return;
@@ -1823,7 +1902,7 @@ wxBoxSizer* MainFrame::create_side_tools()
     wxBoxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
 
     m_slice_select = eSlicePlate;
-    m_print_select = eSendBambuConnect;
+    m_print_select = ePrintPlate;
 
     auto slice_panel = new wxPanel(this,wxID_ANY,wxDefaultPosition,wxDefaultSize);
     auto print_panel = new wxPanel(this,wxID_ANY,wxDefaultPosition,wxDefaultSize);
@@ -1832,8 +1911,14 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_slice_btn = new SideButton(slice_panel, _L("Slice plate"), "");
     m_slice_option_btn = new SideButton(slice_panel, "", "sidebutton_dropdown", 0, 14);
-    m_print_btn = new SideButton(print_panel, _L("Send to BC"), "");
+    m_print_btn = new SideButton(print_panel, _L("Print plate"), "");
     m_print_option_btn = new SideButton(print_panel, "", "sidebutton_dropdown", 0, 14);
+
+    // FORK(bambu-connect): the side print button defaults to "Send to BC". Applied as an override right
+    // after construction so the two upstream lines above stay byte-identical and keep auto-merging;
+    // editing them in place made every nightly upstream merge conflict.
+    m_print_select = eSendBambuConnect;
+    m_print_btn->SetLabel(_L("Send to BC"));
 
     auto slice_sizer = new wxBoxSizer(wxHORIZONTAL);
     slice_sizer->Add(m_slice_option_btn, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(1));
@@ -2001,7 +2086,8 @@ wxBoxSizer* MainFrame::create_side_tools()
             SidePopup* p = new SidePopup(this);
 
             if (wxGetApp().preset_bundle
-                && !wxGetApp().preset_bundle->is_bbl_vendor()) {
+                && !wxGetApp().preset_bundle->is_bbl_vendor()
+                && !wxGetApp().app_config->get_bool("use_printer_agents")) {
                 // ThirdParty Buttons
                 SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
                 export_gcode_btn->SetCornerRadius(0);
@@ -2134,7 +2220,7 @@ wxBoxSizer* MainFrame::create_side_tools()
 
                 const auto preset_bundle = wxGetApp().preset_bundle;
                 if (preset_bundle) {
-                    if (preset_bundle->use_bbl_network()) {
+                    if (preset_bundle->use_bbl_network() || wxGetApp().app_config->get_bool("use_printer_agents")) {
                         // BBL network support everything
                     } else {
                         support_send = false; // All 3rd print hosts do not have the send options
@@ -2195,7 +2281,7 @@ wxBoxSizer* MainFrame::create_side_tools()
                     p->Dismiss();
                 });
                 p->append_button(send_to_bambu_connect_btn);
-                }
+            }
 
             p->Popup(m_print_btn);
         }
@@ -4280,7 +4366,7 @@ void MainFrame::load_printer_url(wxString url, wxString apikey)
 void MainFrame::load_printer_url()
 {
     PresetBundle &preset_bundle = *wxGetApp().preset_bundle;
-    if (preset_bundle.use_bbl_device_tab() || NetworkAgentFactory::is_current_printer_agent_plugin())
+    if (preset_bundle.use_bbl_device_tab() || wxGetApp().app_config->get_bool("use_printer_agents"))
         return;
 
     auto     cfg = preset_bundle.printers.get_edited_preset().config;
