@@ -645,7 +645,11 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
     // Setting only one silently produces a solid comb, so warn the user instead of
     // doing nothing. Counts are in cell units (one cell = one tooth of each material),
     // so any positive integer is meaningful — no rounding/snapping is applied.
-    bool beam_interlocking_on = config->opt_bool("interlocking_beam");
+    // Only from the Print Settings tab (is_global_config). The per-object paths construct a fresh
+    // ConfigManipulation on every settings change (GUI_ObjectSettings.cpp, GUI_ObjectTableSettings.cpp),
+    // so m_beam_density_xor_warned is always false there and the dialog reappeared on every edit -
+    // and it was judging the global preset's values while the user edited a single object.
+    bool beam_interlocking_on = is_global_config && config->opt_bool("interlocking_beam");
     int  beam_group = config->opt_int("interlocking_beam_group_count");
     int  beam_gap   = config->opt_int("interlocking_beam_gap");
     bool xor_bad = beam_interlocking_on && (beam_group > 0) != (beam_gap > 0);

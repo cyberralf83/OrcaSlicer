@@ -4740,6 +4740,9 @@ void PrintConfigDef::init_fff_params()
                        "will not be generated, measured in cells. Controls vertical (Z-axis) avoidance independently "
                        "from the horizontal (XY) boundary avoidance.");
     def->min      = 0;
+    // Bounded like its siblings: this value multiplies into the air-dilation kernel's cell count
+    // (x*y*z), so an unbounded value is a memory/CPU blowup rather than a useful setting.
+    def->max      = 100;
     def->category = L("Advanced");
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionInt(2));
@@ -6155,7 +6158,10 @@ void PrintConfigDef::init_fff_params()
                      "silently falls back to a normal (possibly visible) position. Only used when \"Hide seam at part "
                      "interface\" is enabled.");
     def->sidetext = L("mm");
-    def->min = 0;
+    // Not 0: at zero depth the predicate degenerates to "any point at all inside", with none of the
+    // margin the feature-off path gets from its -0.5 mm test. Since burial outranks angle and
+    // visibility in SeamComparator, that lets a marginal point beat a genuinely better seam.
+    def->min = 0.1f;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(2.0));
 

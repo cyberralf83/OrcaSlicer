@@ -11232,6 +11232,12 @@ void Plater::priv::on_action_send_bamcu_conect(SimpleEvent&)
     // Copy to ~/Downloads/Bambuconnectfiles so Bambu Connect can access it (App Sandbox restriction)
     fs::path downloads_dir(wxStandardPaths::Get().GetUserDir(wxStandardPaths::Dir_Downloads).utf8_str().data());
     downloads_dir /= "Bambuconnectfiles";
+    // The name is built from the project and plate names, which the user controls: strip path
+    // separators and the characters upstream filters in SelectMachine, otherwise a plate named
+    // ".." or "a/b" writes outside the staging directory.
+    filename = from_u8(filter_characters(filename.utf8_string(), "<>[]:/\\|?*\""));
+    if (filename.empty())
+        filename = "plate";
     fs::path dest_path = downloads_dir / filename.utf8_string();
     // Everything that touches the filesystem stays inside this try. ~/Downloads is TCC-protected on
     // macOS: if the user denies access (or the volume is full/read-only), the throwing filesystem
@@ -11252,8 +11258,10 @@ void Plater::priv::on_action_send_bamcu_conect(SimpleEvent&)
     }
     wxString filepath = wxString::FromUTF8(dest_path.string());
 
-    // URL encode each parameter individually
-    std::string encoded_path = Http::url_encode(filepath.ToStdString());
+    // URL encode each parameter individually. Use utf8_string(), not ToStdString(): the latter
+    // converts with the current locale and yields an empty string on failure, so a non-ASCII
+    // project name on a non-UTF-8 locale produced an empty path= and Bambu Connect opened nothing.
+    std::string encoded_path = Http::url_encode(filepath.utf8_string());
     std::string encoded_name = Http::url_encode(filename.utf8_string());
 
     // Build URL according to Bambu Connect documentation

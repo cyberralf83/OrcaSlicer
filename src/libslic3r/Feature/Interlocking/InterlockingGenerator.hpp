@@ -101,6 +101,12 @@ private:
     {}
 
     bool isActiveBeamLayer(size_t beam_layer_idx) const;
+
+    // Length of one skip cycle in beam-layer groups: 2 active groups + the skipped ones.
+    size_t beamLayerCycleLength() const;
+
+    // Beam orientation (0 or 1) for a beam-layer index, taken as the phase inside the skip cycle.
+    size_t beamLayerType(size_t beam_layer_idx) const;
     
     /*! Given two polygons, return the parts that border on air, and grow 'perpendicular' up to 'detect' distance.
      *

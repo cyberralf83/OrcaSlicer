@@ -87,18 +87,32 @@ void InterlockingGenerator::generate_interlocking_structure(PrintObject* print_o
     }
 }
 
+size_t InterlockingGenerator::beamLayerCycleLength() const
+{
+    if (skip_layers <= 0)
+        return 2;
+    // One cycle = 2 beam-layer groups (type 0 + type 1) + skip groups
+    // skip_groups = ceil(skip_layers / beam_layer_count)
+    size_t skip_groups = (static_cast<size_t>(skip_layers) + static_cast<size_t>(beam_layer_count) - 1)
+                         / static_cast<size_t>(beam_layer_count);
+    return 2 + skip_groups;
+}
+
 bool InterlockingGenerator::isActiveBeamLayer(size_t beam_layer_idx) const
 {
     if (skip_layers <= 0)
         return true;
 
-    // One cycle = 2 beam-layer groups (type 0 + type 1) + skip groups
-    // skip_groups = ceil(skip_layers / beam_layer_count)
-    size_t skip_groups  = (static_cast<size_t>(skip_layers) + static_cast<size_t>(beam_layer_count) - 1)
-                          / static_cast<size_t>(beam_layer_count);
-    size_t cycle_length = 2 + skip_groups;
-    size_t position     = beam_layer_idx % cycle_length;
-    return position < 2;
+    return (beam_layer_idx % beamLayerCycleLength()) < 2;
+}
+
+size_t InterlockingGenerator::beamLayerType(size_t beam_layer_idx) const
+{
+    // Phase must be taken within the skip cycle, not from the raw index. With an odd cycle length
+    // (e.g. beam_layer_count=2, skip_layers=1 -> cycle 3) the raw index parity drifts one step per
+    // cycle, so surviving beam groups came out as 0,1,1,0,0,1... - alternating Z gaps instead of the
+    // uniform spacing the setting promises. Position 0/1 inside a cycle IS the beam type.
+    return beam_layer_idx % beamLayerCycleLength() % 2;
 }
 
 std::pair<ExPolygons, ExPolygons> InterlockingGenerator::growBorderAreasPerpendicular(const ExPolygons& a, const ExPolygons& b, const coord_t& detect) const
@@ -206,7 +220,13 @@ void InterlockingGenerator::generateInterlockingStructure() const
             has_all_meshes.erase(p);
         }
 
-        handleThinAreas(has_all_meshes);
+        // handleThinAreas is an XY-only algorithm (number_of_beams_expand = boundary_avoidance - 1).
+        // air_filtering is now also true when only the fork's Z avoidance is set, so gate on the XY
+        // value: with XY = 0 it would run with a negative expansion, do nothing useful, and still
+        // close+retype every surface as stInternal on every layer - geometry churn where upstream
+        // did nothing at all.
+        if (boundary_avoidance > 0)
+            handleThinAreas(has_all_meshes);
     }
 
     // Density filtering is applied per-axis inside applyMicrostructureToOutlines
@@ -372,7 +392,7 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
                 if (!isActiveBeamLayer(beam_layer_idx))
                     continue;
 
-                size_t layer_type = beam_layer_idx % cell_area_per_mesh_per_layer.size();
+                size_t layer_type = beamLayerType(beam_layer_idx) % cell_area_per_mesh_per_layer.size();
 
                 // Skip perpendicular layers in unidirectional mode. This continue
                 // also guarantees the layer_type == 1 density check below is never
