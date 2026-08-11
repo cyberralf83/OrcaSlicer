@@ -168,10 +168,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           echo "=== Configuring remotes ==="
-          # The token lives in the origin URL for the life of this step only. Do NOT write it into a
-          # credential.helper: git config expands it at write time, leaving a repo+workflow-scoped PAT
-          # in cleartext in .git/config, which persists forever on the self-hosted runner.
-          git remote set-url origin "https://x-access-token:${PAT_TOKEN}@github.com/${REPO}"
+          # Do NOT put the token in the origin URL or a credential.helper: git config expands both at
+          # write time, leaving a repo+workflow-scoped PAT in cleartext in .git/config - which nothing
+          # cleans up, so on the self-hosted runner it persists indefinitely. The push below instead
+          # uses the credential actions/checkout already installed from the same PAT
+          # (http.https://github.com/.extraheader), which checkout's own post-job step removes.
           git config --local --unset-all credential.helper || true
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git 2>/dev/null \
             || git remote set-url upstream https://github.com/SoftFever/OrcaSlicer.git
