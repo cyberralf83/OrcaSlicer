@@ -23,7 +23,9 @@ class ConfigManipulation
     bool                is_msg_dlg_already_exist{ false };
     bool                m_is_initialized_support_material_overhangs_queried{ false };
     bool                m_support_material_overhangs_queried{ false };
-    bool                m_beam_density_xor_warned = false;
+    // Process-wide: the per-object paths construct a fresh ConfigManipulation on every settings
+    // change, so an instance latch never held there and the dialog reappeared on every edit.
+    static inline bool  m_beam_density_xor_warned = false;
     bool                is_BBL_Printer{false};
 
     // function to loading of changed configuration

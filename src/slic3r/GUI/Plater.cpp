@@ -11215,7 +11215,12 @@ void Plater::priv::on_action_send_bamcu_conect(SimpleEvent&)
     auto gcodeResult = q->send_gcode(partplate_list.get_curr_plate_index(), [this](int export_stage, int current, int total, bool &cancel) {});
 
     if (gcodeResult != 0) {
-        BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":send_gcode failed\n";
+        // send_gcode() -> export_3mf() runs with SaveStrategy::Silence, so it shows nothing on any
+        // failure path. Without this dialog the user clicks "Send to BC" and simply nothing happens.
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": send_gcode failed with " << gcodeResult;
+        GUI::MessageDialog msgdialog(nullptr, _L("Could not export the sliced file for Bambu Connect."), "",
+                                     wxAPPLY | wxOK);
+        msgdialog.ShowModal();
         return;
     }
 

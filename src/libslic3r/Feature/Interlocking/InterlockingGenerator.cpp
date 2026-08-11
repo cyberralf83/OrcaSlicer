@@ -431,8 +431,12 @@ void InterlockingGenerator::applyMicrostructureToOutlines(const std::unordered_s
             size_t beam_layer_idx = layer_nr / static_cast<size_t>(beam_layer_count);
             if (!isActiveBeamLayer(beam_layer_idx))
                 continue;
-            // Skip perpendicular layers in unidirectional mode
-            if (!bidirectional && (beam_layer_idx % 2) == 1)
+            // Skip perpendicular layers in unidirectional mode. This MUST use the same in-cycle phase
+            // as the generation pass above: with the raw index parity the two passes disagree for any
+            // odd cycle length (e.g. beam_layer_count=2, skip_layers=1), so half the generated beam
+            // groups were never applied and the layers in between got a full surface re-type with no
+            // beams at all.
+            if (!bidirectional && beamLayerType(beam_layer_idx) == 1)
                 continue;
 
             ExPolygons layer_outlines = layer_regions[layer_nr];

@@ -73,8 +73,14 @@ inline bool seam_point_is_embedded_enough(const PrintObjectConfig &cfg,
     return embedded_distance < -0.5f;
   // The +0.65*flow_width term cancels the same offset baked into embedded_distance, so the comparison
   // is against the requested burial depth measured from the interface.
+  // The depth is floored at 0.1 mm: at exactly 0 the test degenerates to "any point at all inside",
+  // with none of the margin the feature-off path gets from its -0.5 mm test - and since burial
+  // outranks angle and visibility in SeamComparator, a marginally-inside point would beat a
+  // genuinely better seam. Enforced here rather than as def->min so that a preset storing 0 still
+  // loads (a tightened minimum aborts the CLI and blanks the GUI field).
+  const float interface_depth = std::max(0.1f, (float) cfg.seam_interface_depth.value);
   return layer_idx >= (size_t) std::max(0, cfg.seam_interface_skip_bottom_layers.value)
-         && embedded_distance < -(float) cfg.seam_interface_depth.value + 0.65f * flow_width;
+         && embedded_distance < -interface_depth + 0.65f * flow_width;
 }
 
 //Struct over which all processing of perimeters is done. For each perimeter point, its respective candidate is created,
