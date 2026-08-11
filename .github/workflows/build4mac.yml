@@ -49,18 +49,28 @@ jobs:
           REPO: ${{ github.repository }}
           BRANCH: nightly-builds-with-bc
         run: |
-          set -uo pipefail
+          # -e is the Actions default for `run:`; state it explicitly so the script does not depend on it.
+          set -euo pipefail
 
           # Fork features that must survive every upstream merge. If a marker is gone from the
           # merged tree, the merge silently ate fork code - abort and push nothing.
+          # Declarations AND implementations - an option that still exists but is never read compiles
+          # fine and ships a DMG with the feature silently doing nothing.
           FORK_MARKERS="\
           eSendBambuConnect|src/slic3r/GUI/MainFrame.hpp
+          eSendBambuConnect|src/slic3r/GUI/MainFrame.cpp
           EVT_GLTOOLBAR_SEND_BAMBU_CONNECT|src/slic3r/GUI/GLToolbar.hpp
           on_action_send_bamcu_conect|src/slic3r/GUI/Plater.cpp
           minimal_chute_flush_length|src/libslic3r/PrintConfig.cpp
+          minimal_chute_flush_length|src/libslic3r/Preset.cpp
+          min_chute_purge|src/libslic3r/GCode.cpp
           seam_hide_at_interface|src/libslic3r/PrintConfig.cpp
+          seam_point_is_embedded_enough|src/libslic3r/GCode/SeamPlacer.hpp
+          seam_point_is_embedded_enough|src/libslic3r/GCode/SeamPlacer.cpp
           flush_into_infill_min_layer|src/libslic3r/PrintConfig.cpp
-          interlocking_beam_bidirectional|src/libslic3r/PrintConfig.cpp"
+          flush_into_infill_min_layer|src/libslic3r/GCode/ToolOrdering.cpp
+          interlocking_beam_bidirectional|src/libslic3r/PrintConfig.cpp
+          interlocking_beam_gap|src/libslic3r/Feature/Interlocking/InterlockingGenerator.cpp"
 
           summary() { [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "$1" >> "$GITHUB_STEP_SUMMARY"; return 0; }
 
@@ -82,9 +92,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           echo "=== Configuring remotes ==="
+          # The token lives in the origin URL for the life of this step only. Do NOT write it into a
+          # credential.helper: git config expands it at write time, leaving a repo+workflow-scoped PAT
+          # in cleartext in .git/config, which persists forever on the self-hosted runner.
           git remote set-url origin "https://x-access-token:${PAT_TOKEN}@github.com/${REPO}"
           git config --local --unset-all credential.helper || true
-          git config --local credential.helper '!f() { echo "username=x-access-token"; echo "password=${PAT_TOKEN}"; }; f'
           git remote add upstream https://github.com/SoftFever/OrcaSlicer.git 2>/dev/null \
             || git remote set-url upstream https://github.com/SoftFever/OrcaSlicer.git
 
@@ -179,12 +191,13 @@ jobs:
               marker=$(echo "$marker" | tr -d '[:space:]')
               file=$(echo "$file" | tr -d '[:space:]')
               [ -n "$marker" ] || continue
-              if ! grep -q "$marker" "$file" 2>/dev/null; then
+              if ! grep -qF "$marker" "$file" 2>/dev/null; then
                 MISSING="${MISSING}  ${marker} (expected in ${file})"$'\n'
               fi
             done <<< "${FORK_MARKERS}"
             if [ -n "${MISSING}" ]; then
-              git merge --abort
+              # Diagnostics BEFORE the abort: if `git merge --abort` itself fails the step dies here,
+              # and the operator must still learn that fork code was dropped.
               echo "::error::Merge result is missing fork code - branch NOT updated, nothing pushed."
               echo "Missing markers:"
               echo "${MISSING}"
@@ -193,6 +206,7 @@ jobs:
               summary '```'
               summary "${MISSING}"
               summary '```'
+              git merge --abort
               exit 1
             fi
 
@@ -202,7 +216,9 @@ jobs:
               exit 1
             fi
 
-            if git push origin "${BRANCH}"; then
+            # Push HEAD explicitly: "git push origin <branch>" resolves a local ref, so on a detached
+            # HEAD it reports "Everything up-to-date", exits 0, and we would publish an unpushed tree.
+            if git push origin "HEAD:refs/heads/${BRANCH}"; then
               MERGED=1
               break
             fi

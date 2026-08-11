@@ -11232,13 +11232,22 @@ void Plater::priv::on_action_send_bamcu_conect(SimpleEvent&)
     // Copy to ~/Downloads/Bambuconnectfiles so Bambu Connect can access it (App Sandbox restriction)
     fs::path downloads_dir(wxStandardPaths::Get().GetUserDir(wxStandardPaths::Dir_Downloads).utf8_str().data());
     downloads_dir /= "Bambuconnectfiles";
-    if (!fs::exists(downloads_dir))
-        fs::create_directories(downloads_dir);
     fs::path dest_path = downloads_dir / filename.utf8_string();
+    // Everything that touches the filesystem stays inside this try. ~/Downloads is TCC-protected on
+    // macOS: if the user denies access (or the volume is full/read-only), the throwing filesystem
+    // overloads escape into the wx event handler, OnExceptionInMainLoop() returns false and the app
+    // leaves its main loop - i.e. OrcaSlicer quits and the unsaved project is lost.
     try {
+        if (!fs::exists(downloads_dir))
+            fs::create_directories(downloads_dir);
         fs::copy_file(data._3mf_path, dest_path, fs::copy_options::overwrite_existing);
     } catch (const fs::filesystem_error& e) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to copy 3mf to Downloads: " << e.what();
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to stage 3mf in Downloads: " << e.what();
+        GUI::MessageDialog msgdialog(nullptr,
+                                     _L("Could not write the sliced file to the Downloads folder. Check that OrcaSlicer is "
+                                        "allowed to access Downloads and that there is free space."),
+                                     "", wxAPPLY | wxOK);
+        msgdialog.ShowModal();
         return;
     }
     wxString filepath = wxString::FromUTF8(dest_path.string());

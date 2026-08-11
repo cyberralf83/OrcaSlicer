@@ -1,2 +1,8 @@
 # Set the default behavior, in case people don't have core.autocrlf set.
 * text=auto
+
+# FORK: this fork appends its own ignore rules at the end of .gitignore, which is exactly where
+# upstream appends theirs - it has already conflicted once (merge 8089570a14) and two in-flight
+# upstream branches (feature/preset_cache, feature/cache_profiles_and_optimize_loading_speed) append
+# at the same anchor. A union merge keeps both sides, which is always correct for an ignore list.
+.gitignore merge=union
