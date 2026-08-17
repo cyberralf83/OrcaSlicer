@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: 'Runner override (auto = probe for self-hosted macOS ARM64, fall back to macos-14)'
+        description: 'Runner (self-hosted = always the local Mac; auto = probe, fall back to macos-14)'
         type: choice
         required: false
-        default: 'auto'
+        default: 'self-hosted'
         options:
-          - auto
           - self-hosted
+          - auto
           - macos-14
 
 concurrency:
@@ -33,7 +33,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
-          case "${RUNNER_OVERRIDE:-auto}" in
+          # Default (including scheduled runs, where inputs.runner is empty) is the
+          # local self-hosted Mac. Jobs queue until it is available rather than
+          # silently falling back to hosted macos-14. Use the 'auto' choice for the
+          # old probe-and-fall-back behaviour.
+          case "${RUNNER_OVERRIDE:-self-hosted}" in
             self-hosted)
               echo 'labels=["self-hosted","macOS","ARM64"]' >> "$GITHUB_OUTPUT"
               echo "Manual override: self-hosted"
