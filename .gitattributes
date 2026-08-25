@@ -5,4 +5,8 @@
 # upstream appends theirs - it has already conflicted once (merge 8089570a14) and two in-flight
 # upstream branches (feature/preset_cache, feature/cache_profiles_and_optimize_loading_speed) append
 # at the same anchor. A union merge keeps both sides, which is always correct for an ignore list.
+# The same applies to this file itself: upstream appends rules at end-of-file, right where this
+# fork block sits (it conflicted the scheduled merge of upstream 5ed56eb876 / run 32801164618).
+# Both files are order-independent line lists, so union is always the right resolution.
 .gitignore merge=union
+.gitattributes merge=union
