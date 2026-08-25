@@ -8,7 +8,9 @@
 
 #ifdef _MSC_VER
     #define WIN32_LEAN_AND_MEAN
+    #ifndef NOMINMAX
     #define NOMINMAX
+    #endif
     #include <Windows.h>
 #endif /* _MSC_VER */
 
@@ -147,6 +149,9 @@ Semver get_version_from_json(std::string file_path)
         return Semver();
         //throw ConfigurationError(format("Failed loading configuration file \"%1%\": %2%", file_path, err.what()));
     }
+    catch(...) {
+        return Semver();
+    }
 }
 
 //BBS: add a function to load the key-values from xxx.json
@@ -261,18 +266,28 @@ void extend_default_config_length(DynamicPrintConfig& config, const bool set_nil
         }
     };
 
+    // The four variant sets are immutable after static init and probed for every
+    // key of every preset loaded; one merged map makes that a single lookup.
+    // emplace keeps the first insertion, preserving the first-set-wins priority
+    // of the else-if chain this replaces.
+    static const std::unordered_map<std::string, int> variant_class = [] {
+        std::unordered_map<std::string, int> m;
+        for (const std::string& k : print_options_with_variant)     m.emplace(k, 0);
+        for (const std::string& k : filament_options_with_variant)  m.emplace(k, 1);
+        for (const std::string& k : printer_options_with_variant_1) m.emplace(k, 2);
+        for (const std::string& k : printer_options_with_variant_2) m.emplace(k, 3);
+        return m;
+    }();
+
     for(auto& key :config.keys()){
-        if(auto iter = print_options_with_variant.find(key); iter != print_options_with_variant.end()){
-            replace_nil_and_resize(key, process_variant_length);
-        }
-        else if(auto iter = filament_options_with_variant.find(key); iter != filament_options_with_variant.end()){
-            replace_nil_and_resize(key, filament_variant_length);
-        }
-        else if(auto iter = printer_options_with_variant_1.find(key); iter != printer_options_with_variant_1.end()){
-            replace_nil_and_resize(key, machine_variant_length);
-        }
-        else if(auto iter = printer_options_with_variant_2.find(key); iter != printer_options_with_variant_2.end()){
-            replace_nil_and_resize(key, machine_variant_length * 2);
+        auto iter = variant_class.find(key);
+        if (iter == variant_class.end())
+            continue;
+        switch (iter->second) {
+        case 0: replace_nil_and_resize(key, process_variant_length); break;
+        case 1: replace_nil_and_resize(key, filament_variant_length); break;
+        case 2: replace_nil_and_resize(key, machine_variant_length); break;
+        case 3: replace_nil_and_resize(key, machine_variant_length * 2); break;
         }
     }
 }
@@ -1031,9 +1046,6 @@ static std::vector<std::string> s_Preset_print_options{
     "wall_direction",
     "seam_position",
     "staggered_inner_seams",
-    "seam_hide_at_interface",
-    "seam_interface_depth",
-    "seam_interface_skip_bottom_layers",
     "wall_sequence",
     "is_infill_first",
     "sparse_infill_density",
@@ -1171,10 +1183,9 @@ static std::vector<std::string> s_Preset_print_options{
     "compatible_printers_condition",
     "inherits",
     "flush_into_infill",
-    "flush_into_infill_min_layer",
     "flush_into_objects",
     "flush_into_support",
-    "minimal_chute_flush_length",
+    "enable_mixed_color_sublayer",
     "tree_support_branch_angle",
     "tree_support_angle_slow",
     "tree_support_wall_count",
@@ -1318,12 +1329,7 @@ static std::vector<std::string> s_Preset_print_options{
     "interlocking_beam_layer_count",
     "interlocking_depth",
     "interlocking_boundary_avoidance",
-    "interlocking_boundary_avoidance_z",
     "interlocking_beam_width",
-    "interlocking_beam_bidirectional",
-    "interlocking_beam_skip_layers",
-    "interlocking_beam_group_count",
-    "interlocking_beam_gap",
     "calib_flowrate_topinfill_special_order",
     // Z Anti-Aliasing (ZAA)
     "zaa_enabled",
@@ -1331,8 +1337,29 @@ static std::vector<std::string> s_Preset_print_options{
     "zaa_dont_alternate_fill_direction",
     "zaa_min_z",
     "ironing_expansion",
-
 };
+
+// FORK(seam-hide-at-interface, flush-into-infill-min-layer, min-chute-flush, interlocking-beam):
+// fork-feature options are appended here instead of being inserted into upstream's initializer
+// above. Mid-list insertions sit pressed against upstream's lines and conflict whenever upstream
+// inserts at the same anchor (scheduled-merge run 32801164618 died on exactly that). Membership,
+// not order, is what this whitelist means, so appending is equivalent.
+static struct ForkPresetPrintOptionsAppender {
+    ForkPresetPrintOptionsAppender() {
+        s_Preset_print_options.insert(s_Preset_print_options.end(), {
+            "seam_hide_at_interface",
+            "seam_interface_depth",
+            "seam_interface_skip_bottom_layers",
+            "flush_into_infill_min_layer",
+            "minimal_chute_flush_length",
+            "interlocking_boundary_avoidance_z",
+            "interlocking_beam_bidirectional",
+            "interlocking_beam_skip_layers",
+            "interlocking_beam_group_count",
+            "interlocking_beam_gap",
+        });
+    }
+} s_fork_Preset_print_options_appender;
 
 static std::vector<std::string> s_Preset_filament_options {/*"filament_colour", */ "default_filament_colour", "required_nozzle_HRC", "filament_diameter", "pellet_flow_coefficient", "volumetric_speed_coefficients", "filament_type",
                                                           "filament_soluble", "filament_is_support", "filament_printable", "filament_extruder_compatibility",

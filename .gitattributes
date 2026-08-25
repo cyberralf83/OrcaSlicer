@@ -10,3 +10,7 @@
 # Both files are order-independent line lists, so union is always the right resolution.
 .gitignore merge=union
 .gitattributes merge=union
+# Shell scripts are run by Git Bash on Windows CI, which cannot read a script
+# with CRLF line endings: it fails on the first line. Windows checkouts default
+# to core.autocrlf=true, so keep these LF whatever the platform.
+*.sh text eol=lf

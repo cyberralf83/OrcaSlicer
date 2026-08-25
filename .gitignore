@@ -2,6 +2,7 @@ Build
 Build.bat
 /build*/
 CMakeLists.txt.user
+CMakeUserPresets.json
 **/CMakeLists.txt.autosave
 deps/build*
 MYMETA.json
@@ -53,3 +54,4 @@ __pycache__/
 
 # Superpowers brainstorm visual-companion artifacts
 .superpowers/
+*.opc
