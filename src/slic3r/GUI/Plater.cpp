@@ -12990,7 +12990,7 @@ void Plater::priv::on_action_send_to_multi_machine(SimpleEvent&)
 
 void Plater::priv::on_action_send_bamcu_conect(SimpleEvent&)
 {
-    auto gcodeResult = q->send_gcode(partplate_list.get_curr_plate_index(), [this](int export_stage, int current, int total, bool &cancel) {});
+    auto gcodeResult = q->send_gcode(partplate_list.get_curr_plate_index(), [](int export_stage, int current, int total, bool &cancel) {});
 
     if (gcodeResult != 0) {
         // send_gcode() -> export_3mf() runs with SaveStrategy::Silence, so it shows nothing on any
