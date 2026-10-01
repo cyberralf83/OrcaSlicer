@@ -1098,7 +1098,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     // tower again, so show it. Upstream's 2026-09 BBL profile sync (edc2f8bf90) dropped the
     // purge_in_prime_tower=0 that #7808 added to keep this row visible on BBL.
     {
-        const auto *nozzle_count = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionVector<int>>("extruder_max_nozzle_count");
+        // dynamic_cast, not option<T>(): ConfigOptionVector<int> has no static_type(), and this covers
+        // both the nullable and the plain instantiation of the option.
+        const auto *nozzle_count = dynamic_cast<const ConfigOptionVector<int> *>(
+            preset_bundle->printers.get_edited_preset().config.option("extruder_max_nozzle_count"));
         if (have_prime_tower && fork_bbl_prime_volume_applies(is_BBL_Printer, nozzle_count != nullptr ? nozzle_count->values : std::vector<int>{}))
             toggle_line("prime_volume", true);
     }
