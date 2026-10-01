@@ -14,9 +14,15 @@ on:
           - self-hosted
           - auto
           - macos-14
+      build_ref:
+        description: 'Test build only: branch to build as-is (no upstream merge, no push, no release; the DMG is a run artifact). Empty = normal nightly.'
+        type: string
+        required: false
+        default: ''
 
 concurrency:
-  group: ${{ github.workflow }}
+  # A test build (build_ref) gets its own group so it never cancels, or is cancelled by, the nightly.
+  group: ${{ github.workflow }}-${{ inputs.build_ref || 'nightly' }}
   cancel-in-progress: true
 
 jobs:
@@ -92,12 +98,14 @@ jobs:
       - name: Checkout nightly-builds-with-bc branch
         uses: actions/checkout@v5
         with:
-          ref: nightly-builds-with-bc
+          ref: ${{ inputs.build_ref || 'nightly-builds-with-bc' }}
           fetch-depth: 0
           lfs: 'true'
           token: ${{ secrets.PAT_TOKEN }}
           
       - name: Fetch and merge upstream nightly-builds
+        # Test builds (build_ref) build the given branch as-is: no merge, no push.
+        if: ${{ !inputs.build_ref }}
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -134,7 +142,10 @@ jobs:
           flush_into_infill_min_layer|src/libslic3r/PrintObject.cpp
           minimal_chute_flush_length|src/libslic3r/Print.cpp
           minimal_chute_flush_length|src/slic3r/GUI/Tab.cpp
-          interlocking_beam_gap|src/slic3r/GUI/ConfigManipulation.cpp"
+          interlocking_beam_gap|src/slic3r/GUI/ConfigManipulation.cpp
+          FORK(bbl-prime-volume)|src/libslic3r/Print.cpp
+          FORK(bbl-prime-volume)|src/libslic3r/GCode/WipeTowerEstimate.cpp
+          FORK(bbl-prime-volume)|src/slic3r/GUI/ConfigManipulation.cpp"
 
           # Lists fork markers that are absent from the tree. Used both after a merge and on the
           # already-up-to-date path - a branch that lost fork code in an earlier run must not build
@@ -656,6 +667,8 @@ jobs:
   release:
     name: Deploy to Release
     needs: [build_mac_arm64]
+    # Test builds (build_ref) never touch the published nightly-mac-arm64 release.
+    if: ${{ !inputs.build_ref }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

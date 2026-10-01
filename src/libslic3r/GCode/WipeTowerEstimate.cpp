@@ -10,6 +10,9 @@
 #include <cmath>
 #include <set>
 
+// FORK(bbl-prime-volume)
+#include "ForkPrimeVolume.hpp"
+
 namespace Slic3r {
 
 // Every caller today declares all these keys, but the signature accepts any ConfigBase: fall
@@ -155,6 +158,20 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
         }
         if (nozzles.size() > 1)
             purges[longest_ramming].filament_change_length = float(float_at("filament_change_length", filament_ids[longest_ramming], 0.) * double(nozzles.size() - 1));
+    }
+
+    // FORK(bbl-prime-volume): mirror Print::_make_wipe_tower so arrange and validation size the
+    // tower that will be generated. Bambu Lab is detected by printer_model, as resolve_wipe_tower_type
+    // does. extruder_max_nozzle_count is a nullable option: read it as ConfigOptionVector<int>, which
+    // covers both the nullable and the plain instantiation (a ConfigOptionInts cast would always fail).
+    if (type1 && !purges.empty() &&
+        opt_enum("prime_volume_mode", int(PrimeVolumeMode::pvmDefault)) != int(PrimeVolumeMode::pvmSaving)) {
+        const auto *model        = dynamic_cast<const ConfigOptionString *>(config.option("printer_model"));
+        const bool  is_bbl       = model != nullptr && model->value.compare(0, 9, "Bambu Lab") == 0;
+        const auto *nozzle_count = dynamic_cast<const ConfigOptionVector<int> *>(option_of(config, "extruder_max_nozzle_count"));
+        if (fork_bbl_prime_volume_applies(is_bbl, nozzle_count != nullptr ? nozzle_count->values : std::vector<int>{}))
+            for (WipeTower::PurgeEstimate &purge : purges)
+                purge.prime_volume = float(prime_volume);
     }
 
     const double min_depth      = WipeTower::get_limit_depth_by_height(float(max_object_height));

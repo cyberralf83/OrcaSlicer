@@ -6,8 +6,12 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode/SeamPlacer.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/GCode/ForkPrimeVolume.hpp"
+#include "libslic3r/GCode/WipeTower.hpp"
+#include "libslic3r/GCode/WipeTowerEstimate.hpp"
 
 #include <algorithm>
+#include <limits>
 
 using namespace Slic3r;
 
@@ -79,4 +83,90 @@ TEST_CASE("seam_point_is_embedded_enough decision logic", "[Config][Seam]") {
         REQUIRE_FALSE(seam_point_is_embedded_enough(cfg, 10, true, -1.0f, flow_width));
         REQUIRE(seam_point_is_embedded_enough(cfg, 10, true, -1.6f, flow_width));
     }
+}
+
+// "BBL prime volume" (FORK(bbl-prime-volume)). Upstream 407c78fb30 made the Type1 tower prime with the
+// hidden per-filament filament_prime_volume; the fork restores the visible prime_volume on single-nozzle
+// Bambu Lab printers. The real tower (Print::_make_wipe_tower) can only be checked by slicing; these
+// cases pin the shared rule and the pre-slice estimate that must agree with it.
+TEST_CASE("fork_bbl_prime_volume_applies gate", "[Config][BblPrimeVolume]") {
+    const int nil = std::numeric_limits<int>::max();
+    CHECK_FALSE(fork_has_multi_nozzle_extruder({}));
+    CHECK_FALSE(fork_has_multi_nozzle_extruder({1}));
+    CHECK_FALSE(fork_has_multi_nozzle_extruder({1, 1}));
+    CHECK_FALSE(fork_has_multi_nozzle_extruder({nil}));
+    CHECK(fork_has_multi_nozzle_extruder({1, 6}));
+
+    CHECK(fork_bbl_prime_volume_applies(true, {1}));      // X1C / P1S / P2S / A1
+    CHECK(fork_bbl_prime_volume_applies(true, {1, 1}));   // H2D / X2D
+    CHECK_FALSE(fork_bbl_prime_volume_applies(true, {1, 6}));  // H2C carousel keeps upstream
+    CHECK_FALSE(fork_bbl_prime_volume_applies(false, {1}));    // Qidi and other Type1 keep upstream
+}
+
+// Shaped like upstream's tests/libslic3r/test_wipe_tower_estimate.cpp make_config(): apply() builds
+// enums as ConfigOptionEnumGeneric, as the GUI does. Rectangle wall (the default is rib) and a 5 mm
+// object keep the depth equal to the stacked purge blocks.
+static DynamicPrintConfig bbl_prime_volume_config(const char *printer_model)
+{
+    DynamicPrintConfig config;
+    config.apply(FullPrintConfig::defaults());
+    config.set_key_value("printer_model", new ConfigOptionString(printer_model));
+    config.set_key_value("prime_tower_width", new ConfigOptionFloat(35.));
+    config.set_key_value("prime_tower_infill_gap", new ConfigOptionPercent(150.));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.21));
+    config.set_key_value("prime_volume", new ConfigOptionFloat(60.));
+    config.set_key_value("filament_prime_volume", new ConfigOptionFloats({30., 45.}));
+    config.set_key_value("filament_adhesiveness_category", new ConfigOptionInts({100, 0}));
+    config.set_key_value("prime_tower_brim_width", new ConfigOptionFloat(3.));
+    config.set_deserialize_strict("wipe_tower_wall_type", "rectangle");
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4}));
+    config.set_deserialize_strict("timelapse_type", "0");
+    config.set_key_value("enable_wrapping_detection", new ConfigOptionBool(false));
+    config.set_key_value("purge_in_prime_tower", new ConfigOptionBool(false));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    return config;
+}
+
+static double bbl_prime_volume_depth(const ConfigBase &config)
+{
+    return estimate_wipe_tower_footprint(config, WipeTowerType::Type1, {0, 1}, 0.21, 5.).depth;
+}
+
+static double bbl_prime_volume_blocks(float first, float second)
+{
+    return WipeTower::estimate_tower_blocks_depth({{first, 100}, {second, 0}}, 35.f, 0.21f, 0.4f, 1.5f);
+}
+
+TEST_CASE("Type1 estimate sizes single-nozzle Bambu Lab towers from prime_volume", "[Config][BblPrimeVolume]") {
+    SECTION("single-nozzle Bambu Lab: prime_volume drives the depth, filament_prime_volume does not") {
+        DynamicPrintConfig config = bbl_prime_volume_config("Bambu Lab X1 Carbon");
+        CHECK_THAT(bbl_prime_volume_depth(config), Catch::Matchers::WithinAbs(bbl_prime_volume_blocks(60.f, 60.f), 1e-4));
+        config.set_key_value("prime_volume", new ConfigOptionFloat(120.));
+        const double at_120 = bbl_prime_volume_depth(config);
+        CHECK_THAT(at_120, Catch::Matchers::WithinAbs(bbl_prime_volume_blocks(120.f, 120.f), 1e-4));
+        config.set_key_value("filament_prime_volume", new ConfigOptionFloats({10., 10.}));
+        CHECK_THAT(bbl_prime_volume_depth(config), Catch::Matchers::WithinAbs(at_120, 1e-9));
+    }
+    SECTION("Saving mode keeps upstream's fixed prime, independent of prime_volume") {
+        DynamicPrintConfig config = bbl_prime_volume_config("Bambu Lab X1 Carbon");
+        config.set_deserialize_strict("prime_volume_mode", "Saving");
+        const double saving = bbl_prime_volume_depth(config);
+        config.set_key_value("prime_volume", new ConfigOptionFloat(120.));
+        CHECK_THAT(bbl_prime_volume_depth(config), Catch::Matchers::WithinAbs(saving, 1e-9));
+    }
+    SECTION("H2C carousel keeps upstream: per-filament volumes") {
+        DynamicPrintConfig config = bbl_prime_volume_config("Bambu Lab H2C");
+        // Nullable option: set it the way presets do, not as a plain ConfigOptionInts.
+        config.set_deserialize_strict("extruder_max_nozzle_count", "1,6");
+        CHECK_THAT(bbl_prime_volume_depth(config), Catch::Matchers::WithinAbs(bbl_prime_volume_blocks(30.f, 45.f), 1e-4));
+    }
+    SECTION("non-Bambu Type1 keeps upstream: per-filament volumes") {
+        DynamicPrintConfig config = bbl_prime_volume_config("");
+        CHECK_THAT(bbl_prime_volume_depth(config), Catch::Matchers::WithinAbs(bbl_prime_volume_blocks(30.f, 45.f), 1e-4));
+    }
+}
+
+TEST_CASE("prime_volume stays in the print preset whitelist", "[Config][BblPrimeVolume]") {
+    const std::vector<std::string> &po = Slic3r::Preset::print_options();
+    REQUIRE(std::find(po.begin(), po.end(), std::string("prime_volume")) != po.end());
 }

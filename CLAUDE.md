@@ -14,12 +14,13 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
 ## This Fork
 
 - Tracks upstream OrcaSlicer (`SoftFever/OrcaSlicer`) nightly builds, merged every few days
-- Custom code is limited to five fork features plus the CI workflows to build them:
+- Custom code is limited to six fork features plus the CI workflows to build them:
   1. **Bambu Connect export plugin** (see below)
   2. **Minimum Chute Flush** — `minimal_chute_flush_length` (see below)
   3. **Seam hide at part interface** — `seam_hide_at_interface`, `seam_interface_depth`, `seam_interface_skip_bottom_layers`; decision logic in `SeamPlacerImpl::seam_point_is_embedded_enough` (SeamPlacer.cpp/hpp)
   4. **Flush-into-infill minimum layer** — `flush_into_infill_min_layer` gate in `ToolOrdering.cpp` (+ PrintConfig/Preset/PrintObject/Tab/ConfigManipulation/GUI_Factories)
   5. **Interlocking beam controls** — `interlocking_boundary_avoidance_z`, `interlocking_beam_bidirectional`, `interlocking_beam_skip_layers`, `interlocking_beam_group_count`, `interlocking_beam_gap` in `Feature/Interlocking/InterlockingGenerator.cpp/hpp`
+  6. **BBL prime volume** — `FORK(bbl-prime-volume)`: the Type1 tower primes with `prime_volume` again on single-nozzle Bambu Lab printers (see below)
 - **Do NOT make changes unrelated to these features**
 - Keep the diff from upstream as minimal as possible. Fork-only tests go in `tests/libslic3r/test_config_fork.cpp` (registered in that suite's CMakeLists.txt), NEVER in upstream-owned test files — upstream test files must stay byte-identical to upstream so scheduled merges don't conflict. Same rule for `AGENTS.md`: it is upstream's file; fork context lives only in `CLAUDE.md`.
 - **Prefer append-only fork changes over in-place edits of upstream lines, and leave at least one unchanged line of separation.** Measured with `git merge-file`: a fork block with **zero** unchanged lines between it and the line upstream edits still conflicts; **one** separator line merges cleanly. So "I didn't touch upstream's line" is necessary but NOT sufficient — a mid-list insertion pressed against upstream's terminating line buys nothing. When a fork feature must change upstream behaviour, leave upstream's statement byte-identical and add a marked `// FORK(<feature>):` block that overrides the result, with a blank line or comment between them.
@@ -66,6 +67,23 @@ if (is_real_toolchange && min_chute_purge > EPSILON && gcodegen.is_BBL_Printer()
 
 **Units/intuition:** report chute purge as VOLUME (mm³) or MASS (~0.12 g PLA per 100 mm³). The real ~100 mm³ poop is a ~2 mm-thick coil ~30 mm long with a thin drawn tail — NOT a clean 0.4 mm thread (100 mm³ as a 0.4 mm thread would be ~796 mm, which never physically forms). To inspect per-change chute volumes, slice headless and sum `G1 E` between `; FLUSH_START`/`; FLUSH_END`.
 
+
+### BBL prime volume (`FORK(bbl-prime-volume)`)
+
+Upstream `407c78fb30` (PR #14800, H2C carousel, 2026-07) made the Type1 tower prime every tool change with
+the per-filament `filament_prime_volume` (no GUI field; 30 mm³ in Bambu filament presets) instead of the
+process `prime_volume`, for every printer. `da2934d02a` had deliberately kept `prime_volume`, and v2.4.x
+uses it. Then upstream's BBL profile sync `edc2f8bf90` (2026-09) dropped `purge_in_prime_tower: 0` (#7808),
+which hides the Prime volume row on BBL. The fork restores both on Bambu Lab printers without a multi-nozzle
+extruder (all but H2C), keeping upstream behaviour for H2C and non-BBL Type1 (Qidi, also required to keep
+upstream's `test_wipe_tower_estimate.cpp` green).
+- Rule: `src/libslic3r/GCode/ForkPrimeVolume.hpp` (fork-owned header) — `fork_bbl_prime_volume_applies(is_bbl, extruder_max_nozzle_count)`.
+- Call sites, each a marked block after upstream's untouched lines: `Print.cpp` (`_make_wipe_tower`, Type1 `wipe_volume_ec`), `GCode/WipeTowerEstimate.cpp` (after the Type1 purge loop), `GUI/ConfigManipulation.cpp` (re-show the `prime_volume` row).
+- `extruder_max_nozzle_count` is nullable: read it as `ConfigOptionVector<int>`, never `ConfigOptionInts` (that cast always fails).
+- Default `prime_volume` is 45 mm³ (no BBL process profile sets it), so untouched projects get larger towers than nightly's 30 — same as v2.4.x.
+- Tests: `[BblPrimeVolume]` in `test_config_fork.cpp`. The generated tower can only be verified by slicing (prime_volume P after the fix == every filament_prime_volume P before it, byte for byte).
+- Docs: `docs/superpowers/specs/2026-10-01-bbl-prime-volume-regression-design.md`, plan + review alongside. Drop the fork blocks once upstream fixes both the tower and the estimate.
+
 ### CI Workflows
 
 Two macOS workflows, both producing signed + notarized DMGs published to the `nightly-mac-arm64` GitHub release:
@@ -80,7 +98,7 @@ Two macOS workflows, both producing signed + notarized DMGs published to the `ni
 
 **The `Fetch and merge upstream nightly-builds` step is identical in both workflows — keep them in sync.** Its contract:
 - Never auto-resolves. On conflict it aborts, pushes nothing, and fails the run (deliberate: an earlier `git checkout --ours` version silently discarded upstream code and still went green). The failure writes a job summary listing conflicted files, hunk counts, the upstream commits that touched them, and the resolve commands.
-- Verifies the fork's feature markers (`eSendBambuConnect`, `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT`, `on_action_send_bamcu_conect`, `minimal_chute_flush_length`, `seam_hide_at_interface`, `flush_into_infill_min_layer`, `interlocking_beam_bidirectional`) still exist in the merged tree before committing — a clean merge that drops fork code is aborted too. Add a marker here when adding a fork feature.
+- Verifies the fork's feature markers (`eSendBambuConnect`, `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT`, `on_action_send_bamcu_conect`, `minimal_chute_flush_length`, `seam_hide_at_interface`, `flush_into_infill_min_layer`, `interlocking_beam_bidirectional`, `FORK(bbl-prime-volume)`) still exist in the merged tree before committing — a clean merge that drops fork code is aborted too. Add a marker here when adding a fork feature.
 - Retries the upstream tag fetch (3×) so a network blip doesn't kill the build, clears a stale `MERGE_HEAD` left by a killed run on the self-hosted runner, and redoes the merge on top of the new tip if the push races another push (3 rounds).
 
 ### Self-hosted runner setup (Mac ARM64)
@@ -114,6 +132,7 @@ The runner lives at `/Users/michael/GitHub/self-hosted-runner-environment/orca-r
 
 **Operating notes:**
 - Trigger: `gh workflow run build4mac_local.yml -R cyberralf83/OrcaSlicer --ref nightly-builds-with-bc`
+- Test build of a branch (no upstream merge, no push, no release; DMG is a run artifact): `gh workflow run build4mac_local.yml -R cyberralf83/OrcaSlicer --ref <branch> -f build_ref=<branch>` (`build4mac_local.yml` only)
 - Runner status: `gh api repos/cyberralf83/OrcaSlicer/actions/runners --jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'`
 - A fresh deps cache lives at the cache key `macos-14-cache-orcaslicer_deps-build-<hash of deps/**>`; first run is ~1h, subsequent runs skip Install-build-tools + Build-dependencies entirely.
 

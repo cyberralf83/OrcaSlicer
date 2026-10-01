@@ -17,6 +17,9 @@
 #include <sstream>
 #include <wx/msgdlg.h>
 
+// FORK(bbl-prime-volume)
+#include "libslic3r/GCode/ForkPrimeVolume.hpp"
+
 namespace Slic3r {
 namespace GUI {
 
@@ -1090,6 +1093,15 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     toggle_line("toolchange_cyclic_first_layer", use_cyclic_ordering);
 
     toggle_line("prime_volume",have_prime_tower && (!purge_in_primetower || !bSEMM));
+
+    // FORK(bbl-prime-volume): on single-nozzle Bambu Lab printers "Prime volume" sizes the Type1
+    // tower again, so show it. Upstream's 2026-09 BBL profile sync (edc2f8bf90) dropped the
+    // purge_in_prime_tower=0 that #7808 added to keep this row visible on BBL.
+    {
+        const auto *nozzle_count = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionVector<int>>("extruder_max_nozzle_count");
+        if (have_prime_tower && fork_bbl_prime_volume_applies(is_BBL_Printer, nozzle_count != nullptr ? nozzle_count->values : std::vector<int>{}))
+            toggle_line("prime_volume", true);
+    }
 
     for (auto el : {"flush_into_infill", "flush_into_support", "flush_into_objects"})
         toggle_field(el, have_prime_tower);
