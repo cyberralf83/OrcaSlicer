@@ -98,7 +98,7 @@ Two macOS workflows, both producing signed + notarized DMGs published to the `ni
 
 **The `Fetch and merge upstream nightly-builds` step is identical in both workflows — keep them in sync.** Its contract:
 - Never auto-resolves. On conflict it aborts, pushes nothing, and fails the run (deliberate: an earlier `git checkout --ours` version silently discarded upstream code and still went green). The failure writes a job summary listing conflicted files, hunk counts, the upstream commits that touched them, and the resolve commands.
-- Verifies the fork's feature markers (`eSendBambuConnect`, `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT`, `on_action_send_bamcu_conect`, `minimal_chute_flush_length`, `seam_hide_at_interface`, `flush_into_infill_min_layer`, `interlocking_beam_bidirectional`, `FORK(bbl-prime-volume)`) still exist in the merged tree before committing — a clean merge that drops fork code is aborted too. Add a marker here when adding a fork feature.
+- Verifies the fork's feature markers (`eSendBambuConnect`, `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT`, `on_action_send_bamcu_conect`, `minimal_chute_flush_length`, `seam_hide_at_interface`, `flush_into_infill_min_layer`, `interlocking_beam_bidirectional`, `fork_bbl_prime_volume_applies`) still exist in the merged tree before committing — a clean merge that drops fork code is aborted too. Add a marker here when adding a fork feature.
 - Retries the upstream tag fetch (3×) so a network blip doesn't kill the build, clears a stale `MERGE_HEAD` left by a killed run on the self-hosted runner, and redoes the merge on top of the new tip if the push races another push (3 rounds).
 
 ### Self-hosted runner setup (Mac ARM64)

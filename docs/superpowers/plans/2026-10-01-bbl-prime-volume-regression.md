@@ -132,7 +132,7 @@ Local build is not currently possible on this Mac (no cmake/ninja; 17 GB free, a
 needs more). Options for the user: (a) free disk + `brew install cmake ninja` and build locally
 (~1–2 h first time), (b) push the branch and run `build4mac_local.yml` on it.
 Acceptance once a binary exists:
-1. `fork_tests`/`libslic3r_tests "[Fork]"` pass.
+1. the whole `libslic3r_tests` suite passes (fork cases tagged `[Config][BblPrimeVolume]`).
 2. Headless slice of the Ahava X1C plate (rib tower, moved into free space): tower volume and
    footprint change with `prime_volume` 5/10/30 and are independent of `filament_prime_volume`.
    Expected ≈ stock 2.4.2 numbers (27×27 mm at 10, 21×20 mm at 5).
@@ -152,7 +152,7 @@ estimate as well.
 Build: `build4mac_local.yml` test build (`build_ref`), run 36823691867, commit `edeefe1aed`; release job skipped,
 `nightly-mac-arm64` untouched. (First run 36823244196 failed to compile `ConfigManipulation.cpp`:
 `DynamicConfig::option<ConfigOptionVector<int>>` needs `static_type()`; fixed in `edeefe1aed`.)
-Headless slices of the Ahava X1C plate (7 colours, 374 changes, rib tower), `--datadir` isolated:
+Headless slices of the Ahava X1C plate (7 colours, 373 tool changes, rib tower), `--datadir` isolated:
 
 | prime_volume | filament_prime_volume | tower | tower vol | result |
 |---|---|---|---|---|
@@ -162,6 +162,11 @@ Headless slices of the Ahava X1C plate (7 colours, 374 changes, rib tower), `--d
 | 20 | 30 | — | — | refused: "Prime Tower is partially outside the printable area" (tower grew) |
 | 30 | 30 | — | — | refused: G-code path conflict with an object (tower grew) |
 
-The 5 / 10 rows equal the pre-fix build with every `filament_prime_volume` = 5 / 10 (same size and volume).
+The 5 / 10 rows equal the pre-fix (installed 2.5.0-dev) build's slices of the same copies with every
+`filament_prime_volume` = 5 / 10: 20.7 × 19.6 mm / 25.1 cm³ and 26.5 × 27.1 mm / 28.2 cm³. That is a same-size,
+same-volume match across builds, not a byte-identity check (the two builds have different upstream bases);
+the md5 identity above is within the post-fix build only.
+Workflow fork markers were tightened to `fork_bbl_prime_volume_applies|<file>` after the final review
+(the `FORK(...)` comment also matched the include line, so a merge that dropped the logic would have passed).
 Not verified yet: GUI row visibility on a BBL single-nozzle preset, H2C unchanged, and the
 `[BblPrimeVolume]` unit tests (the mac workflow does not build tests).

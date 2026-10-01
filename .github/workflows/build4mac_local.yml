@@ -143,9 +143,9 @@ jobs:
           minimal_chute_flush_length|src/libslic3r/Print.cpp
           minimal_chute_flush_length|src/slic3r/GUI/Tab.cpp
           interlocking_beam_gap|src/slic3r/GUI/ConfigManipulation.cpp
-          FORK(bbl-prime-volume)|src/libslic3r/Print.cpp
-          FORK(bbl-prime-volume)|src/libslic3r/GCode/WipeTowerEstimate.cpp
-          FORK(bbl-prime-volume)|src/slic3r/GUI/ConfigManipulation.cpp"
+          fork_bbl_prime_volume_applies|src/libslic3r/Print.cpp
+          fork_bbl_prime_volume_applies|src/libslic3r/GCode/WipeTowerEstimate.cpp
+          fork_bbl_prime_volume_applies|src/slic3r/GUI/ConfigManipulation.cpp"
 
           # Lists fork markers that are absent from the tree. Used both after a merge and on the
           # already-up-to-date path - a branch that lost fork code in an earlier run must not build

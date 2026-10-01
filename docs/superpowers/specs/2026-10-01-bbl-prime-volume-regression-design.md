@@ -25,7 +25,7 @@ single-nozzle printers, so it is not an escape hatch either.
 Sizes are the extent of `; FEATURE: Prime tower` extrusions (include rib protrusions). Stock
 2.4.2 honours `prime_volume` and ignores `filament_prime_volume`; the fork and upstream nightly do
 the reverse. So the regression is **upstream**, not fork code, and it is still present at upstream
-`865e9963c3` (2026-09-30) and in the fork's latest merge `bbb99e1c4d` (upstream `828278af`).
+`865e9963c3` (2026-09-30) and in the fork's latest merge `bbb99e1c4d` (upstream tag object `828278af`, commit `79afb020db`).
 
 ## Root cause
 
@@ -97,4 +97,6 @@ which is exactly their behaviour between the Oct-2025 revert and July 2026.
 ## Upstream report (to file separately, after user review)
 
 Point at `da2934d02a` (intentional revert) vs `407c78fb30` (re-introduction), the dead fallback,
-and #8151. Suggested upstream fix is the same gate.
+the `edc2f8bf90` profile sync that hides the row again (#7808), and the latent nullable-cast bug at
+`Format/bbs_3mf.cpp` (`dynamic_cast<const ConfigOptionInts*>` on `extruder_max_nozzle_count` always fails).
+Suggested upstream fix is the same gate. (#8151 is unrelated — see the history table.)
