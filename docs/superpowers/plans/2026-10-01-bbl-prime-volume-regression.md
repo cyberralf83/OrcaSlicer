@@ -146,3 +146,22 @@ Acceptance once a binary exists:
 Single marker `FORK(bbl-prime-volume)`; deleting the header and the two blocks restores upstream.
 If upstream fixes the regression, drop the fork blocks after confirming the upstream fix covers the
 estimate as well.
+
+## Verification run (2026-10-01)
+
+Build: `build4mac_local.yml` test build (`build_ref`), run 36823691867, commit `edeefe1aed`; release job skipped,
+`nightly-mac-arm64` untouched. (First run 36823244196 failed to compile `ConfigManipulation.cpp`:
+`DynamicConfig::option<ConfigOptionVector<int>>` needs `static_type()`; fixed in `edeefe1aed`.)
+Headless slices of the Ahava X1C plate (7 colours, 374 changes, rib tower), `--datadir` isolated:
+
+| prime_volume | filament_prime_volume | tower | tower vol | result |
+|---|---|---|---|---|
+| 5 | 30 | 20.7 × 19.6 mm | 25.1 cm³ | ok |
+| 10 | 30 | 26.5 × 27.1 mm | 28.2 cm³ | ok |
+| 10 | 10 | 26.5 × 27.1 mm | 28.2 cm³ | ok — motion G-code md5 identical to the row above |
+| 20 | 30 | — | — | refused: "Prime Tower is partially outside the printable area" (tower grew) |
+| 30 | 30 | — | — | refused: G-code path conflict with an object (tower grew) |
+
+The 5 / 10 rows equal the pre-fix build with every `filament_prime_volume` = 5 / 10 (same size and volume).
+Not verified yet: GUI row visibility on a BBL single-nozzle preset, H2C unchanged, and the
+`[BblPrimeVolume]` unit tests (the mac workflow does not build tests).
