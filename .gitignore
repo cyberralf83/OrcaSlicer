@@ -56,4 +56,6 @@ __pycache__/
 # Superpowers brainstorm visual-companion artifacts
 .superpowers/
 *.opc
+/.test/
 docs/superpowers/
+ctest_results.xml
