@@ -157,7 +157,7 @@ jobs:
       - name: Install build tools
         if: steps.cache_deps.outputs.cache-hit != 'true'
         run: |
-          brew install automake texinfo libtool
+          brew install automake texinfo libtool pkgconf # pkgconf: FFmpeg finds the bundled OpenSSL via pkg-config (upstream a5413efc37)
           brew list
           if brew list --formula zstd &>/dev/null; then
             brew uninstall --ignore-dependencies zstd
