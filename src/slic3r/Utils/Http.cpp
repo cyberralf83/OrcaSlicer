@@ -1,8 +1,23 @@
 #include "Http.hpp"
+#include "libslic3r_version.h"
 
+#include <algorithm>
 #include <atomic>
+#include <boost/filesystem/operations.hpp>
+#include <cassert>
 #include <cstdlib>
+#include <curl/curlver.h>
+#include <fstream>
 #include <functional>
+#include <memory>
+#include <string>
+#include <stdlib.h>
+#include <map>
+#include <mutex>
+#include <ios>
+#include "libslic3r/Exception.hpp"
+#include <iterator>
+#include <ostream>
 #include <thread>
 #include <deque>
 #include <sstream>
@@ -14,6 +29,7 @@
 #include <boost/log/trivial.hpp>
 
 #include <curl/curl.h>
+#include <utility>
 
 #ifdef OPENSSL_CERT_OVERRIDE
 #include <openssl/x509.h>
@@ -45,7 +61,6 @@ struct CurlGlobalInit
             "/etc/ssl/ca-bundle.pem"              // OpenSUSE Tumbleweed
         };
 
-        namespace fs = boost::filesystem;
         // Env var name for the OpenSSL CA bundle (SSL_CERT_FILE nomally)
         const char *const SSL_CA_FILE = X509_get_default_cert_file_env();
         const char * ssl_cafile = ::getenv(SSL_CA_FILE);
@@ -54,10 +69,14 @@ struct CurlGlobalInit
             ssl_cafile = X509_get_default_cert_file();
 
         int replace = true;
-        if (!ssl_cafile || !fs::exists(fs::path(ssl_cafile))) {
+        // ORCA: non-throwing overload; fs_ec is deliberately unread. An existing but unreadable
+        //       path (a static build's baked-in OPENSSLDIR run as another user, say) must fall
+        //       through to CA_BUNDLES, not throw out of this constructor.
+        boost::system::error_code fs_ec;
+        if (!ssl_cafile || !fs::exists(fs::path(ssl_cafile), fs_ec)) {
             const char * bundle = nullptr;
             for (const char * b : CA_BUNDLES) {
-                if (fs::exists(fs::path(b))) {
+                if (fs::exists(fs::path(b), fs_ec)) {
                     ::setenv(SSL_CA_FILE, bundle = b, replace);
                     break;
                 }
@@ -931,13 +950,12 @@ std::string Http::tls_global_init()
 
 std::string Http::tls_system_cert_store()
 {
-    std::string ret;
-
 #ifdef OPENSSL_CERT_OVERRIDE
-    ret = ::getenv(X509_get_default_cert_file_env());
+    if (const char *cert_file = ::getenv(X509_get_default_cert_file_env()))
+        return cert_file;
 #endif
 
-    return ret;
+    return {};
 }
 
 std::string Http::url_encode(const std::string &str)
