@@ -16,9 +16,9 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/KDTreeIndirect.hpp"
 
-// FORK(seam-hide-at-interface): std::max in seam_point_is_embedded_enough. Kept apart from
-// upstream's include list so upstream edits to that list merge cleanly.
-#include <algorithm>
+// FORK(seam-hide-at-interface): forward declaration for seam_point_is_embedded_enough. Kept apart
+// from upstream's include and forward-declaration lists so upstream edits to them merge cleanly.
+namespace Slic3r { class PrintObjectConfig; }
 
 namespace Slic3r {
 
@@ -63,34 +63,16 @@ struct Perimeter {
 };
 
 // Decides whether a single perimeter point is buried deeply enough inside the merged layer silhouette
-// to be preferred as a hidden seam location (e.g. a multimaterial part interface). Kept here as a free
-// function so the slicing path and the unit tests evaluate the exact same logic.
+// to be preferred as a hidden seam location (e.g. a multimaterial part interface). Kept as a free function
+// (defined in SeamPlacer.cpp) so the slicing path and the unit tests evaluate the exact same logic.
 //  - should_compute_layer_embedding: false on single-region layers, where embedded_distance is meaningless.
 //  - embedded_distance: signed distance to the merged silhouette plus 0.65*flow_width (negative == inside).
 // When seam_hide_at_interface is off this reduces to the exact upstream behavior (deeper than 0.5 mm inside).
-inline bool seam_point_is_embedded_enough(const PrintObjectConfig &cfg,
-                                          size_t                   layer_idx,
-                                          bool                     should_compute_layer_embedding,
-                                          float                    embedded_distance,
-                                          float                    flow_width)
-{
-  if (!should_compute_layer_embedding)
-    return false;
-  // Feature OFF: reproduce the upstream embedded_distance < -0.5f preference (equivalent for all values
-  // except the exact, measure-zero boundary embedded_distance == -0.5f).
-  if (!cfg.seam_hide_at_interface.value)
-    return embedded_distance < -0.5f;
-  // The +0.65*flow_width term cancels the same offset baked into embedded_distance, so the comparison
-  // is against the requested burial depth measured from the interface.
-  // The depth is floored at 0.1 mm: at exactly 0 the test degenerates to "any point at all inside",
-  // with none of the margin the feature-off path gets from its -0.5 mm test - and since burial
-  // outranks angle and visibility in SeamComparator, a marginally-inside point would beat a
-  // genuinely better seam. Enforced here rather than as def->min so that a preset storing 0 still
-  // loads (a tightened minimum aborts the CLI and blanks the GUI field).
-  const float interface_depth = std::max(0.1f, (float) cfg.seam_interface_depth.value);
-  return layer_idx >= (size_t) std::max(0, cfg.seam_interface_skip_bottom_layers.value)
-         && embedded_distance < -interface_depth + 0.65f * flow_width;
-}
+bool seam_point_is_embedded_enough(const PrintObjectConfig &cfg,
+                                   size_t                   layer_idx,
+                                   bool                     should_compute_layer_embedding,
+                                   float                    embedded_distance,
+                                   float                    flow_width);
 
 //Struct over which all processing of perimeters is done. For each perimeter point, its respective candidate is created,
 // then all the needed attributes are computed and finally, for each perimeter one point is chosen as seam.
