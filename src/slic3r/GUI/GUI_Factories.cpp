@@ -154,9 +154,9 @@ std::map<std::string, std::vector<SimpleSettingData>> SettingsFactory::PART_CATE
        {"sparse_infill_density", "", 1},
        {"fill_multiline", "", 1},
        {"sparse_infill_pattern", "", 1},
-       {"tpms_adaptive", "", 1},
-       {"tpms_interior_density", "", 1},
-       {"tpms_adaptive_gradient", "", 1},
+       {"adaptive_infill_mode", "", 1},
+       {"adaptive_infill_interior_density", "", 1},
+       {"adaptive_infill_gradient", "", 1},
        {"sparse_infill_smooth_factor", "", 1},
        {"lateral_lattice_angle_1", "", 1},
        {"lateral_lattice_angle_2", "", 1},
@@ -2169,6 +2169,7 @@ wxMenu* MenuFactory::multi_selection_menu()
         menu->AppendSeparator();
 
         append_menu_items_convert_unit(menu);
+        append_menu_item_reload_from_disk(menu);
         append_menu_item_replace_all_with_stl(menu);
         //BBS
         append_menu_item_change_filament(menu);
@@ -2184,6 +2185,7 @@ wxMenu* MenuFactory::multi_selection_menu()
         //append_menu_item_simplify(menu);
         append_menu_item_delete(menu);
         append_menu_items_convert_unit(menu);
+        append_menu_item_reload_from_disk(menu);
         append_menu_item_replace_all_with_stl(menu);
         append_menu_item_change_filament(menu);
         wxMenu* split_menu = new wxMenu();
