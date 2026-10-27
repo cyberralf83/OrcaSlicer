@@ -516,6 +516,7 @@ public:
 
     // returns 0-based indices of extruders used to print the object (without brim, support and other helper extrusions)
     std::vector<unsigned int>   object_extruders() const;
+    std::vector<unsigned int>   printing_extruders() const;
 
     // Called by make_perimeters()
     void slice();
@@ -1156,6 +1157,8 @@ public:
         struct Brim {
             ExtrusionEntityCollection brim;
             std::vector<ObjectInstanceID> instances;
+            // Zero-based logical filament selected when the brim was planned.
+            unsigned int filament_id { unsigned(-1) };
         };
 
         ExtrusionEntityCollection skirt;
@@ -1326,7 +1329,9 @@ public:
     }
 
     //BBS
-    static StringObjectException sequential_print_clearance_valid(const Print &print, Polygons *polygons = nullptr, std::vector<std::pair<Polygon, float>>* height_polygons = nullptr);
+    // warning, if given, names the instances printed later than their place in the object list to avoid a collision.
+    static StringObjectException sequential_print_clearance_valid(const Print &print, Polygons *polygons = nullptr, std::vector<std::pair<Polygon, float>>* height_polygons = nullptr,
+                                                                  StringObjectException *warning = nullptr);
     // Orca: pre-slice clearance check for a prime tower compacted by "No sparse layers".
     static StringObjectException compacted_wipe_tower_clearance_valid(const Print &print, Polygons *polygons = nullptr, std::vector<std::pair<Polygon, float>>* height_polygons = nullptr);
     ConflictResultOpt            get_conflict_result() const { return m_conflict_result; }
@@ -1511,6 +1516,8 @@ private:
     bool                                    m_has_shared_per_object_skirt { false };
     // Orca: Object-keyed brim paths kept for existing code.
     std::map<ObjectID, ExtrusionEntityCollection>         m_brimMap;
+    // Zero-based logical filament selected for each object's brim.
+    std::map<ObjectID, unsigned int>                       m_brimFilamentMap;
     // Orca: Actual brim paths keyed by object instance.
     std::map<ObjectInstanceID, ExtrusionEntityCollection> m_brimMapByInstance;
     // Orca: Translated brim areas keyed by instance, used to find touching brims.

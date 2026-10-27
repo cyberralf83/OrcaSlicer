@@ -79,6 +79,8 @@ jobs:
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.labels) }}
     permissions:
       contents: write
+    outputs:
+      upstream_conflict: ${{ steps.upstream_merge.outputs.upstream_conflict }}
     env:
       date:
       ver:
@@ -104,6 +106,7 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           
       - name: Fetch and merge upstream nightly-builds
+        id: upstream_merge
         # Test builds (build_ref) build the given branch as-is: no merge, no push.
         if: ${{ !inputs.build_ref }}
         env:
@@ -143,6 +146,7 @@ jobs:
           minimal_chute_flush_length|src/libslic3r/Print.cpp
           minimal_chute_flush_length|src/slic3r/GUI/Tab.cpp
           interlocking_beam_gap|src/slic3r/GUI/ConfigManipulation.cpp
+          fork_toggle_print_fff_options|src/slic3r/GUI/ConfigManipulation.cpp
           fork_bbl_prime_volume_applies|src/libslic3r/Print.cpp
           fork_bbl_prime_volume_applies|src/libslic3r/GCode/WipeTowerEstimate.cpp
           fork_bbl_prime_volume_applies|src/slic3r/GUI/ConfigManipulation.cpp"
@@ -230,61 +234,99 @@ jobs:
             exit 0
           fi
 
+          # A conflicting upstream tag must not stop the build. Report the conflict, then fall back to
+          # the newest upstream main commit that still merges cleanly and ship that, so the DMG keeps
+          # tracking upstream as far as it can without anyone resolving anything. The conflict is
+          # NEVER auto-resolved (an earlier `git checkout --ours` silently discarded upstream code);
+          # the `upstream-conflict` job turns the run red until a human resolves it.
+          merges_clean() { git merge-tree --write-tree HEAD "$1" >/dev/null 2>&1; }
+
+          # Newest commit on upstream's first-parent chain (HEAD..$1, excluding $1) that merges cleanly.
+          # Binary search: once a conflicting upstream commit lands, every later one conflicts too.
+          # No mapfile - macOS /bin/bash is 3.2.
+          newest_clean_upstream() {
+            local -a chain=()
+            local c lo hi mid best=""
+            while IFS= read -r c; do chain+=("$c"); done < <(git rev-list --first-parent --reverse "$1" ^HEAD)
+            lo=0; hi=$(( ${#chain[@]} - 2 ))
+            while [ "$lo" -le "$hi" ]; do
+              mid=$(( (lo + hi) / 2 ))
+              if merges_clean "${chain[$mid]}"; then best="${chain[$mid]}"; lo=$((mid + 1)); else hi=$((mid - 1)); fi
+            done
+            printf '%s' "$best"
+          }
+
+          report_conflict() {
+            local f hunks commits
+            CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
+            echo "::warning::Upstream ${UPSTREAM_SHA:0:8} conflicts with ${BRANCH} - not auto-resolved."
+            summary "## Upstream merge conflict"
+            summary ""
+            summary "Upstream tag \`nightly-builds\` = \`${UPSTREAM_SHA}\` conflicts with \`${BRANCH}\`. It was NOT auto-resolved."
+            summary ""
+            summary "### Conflicted files"
+            echo "Conflicted files:"
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              hunks=$(grep -c '^<<<<<<< ' "$f" 2>/dev/null || true)
+              echo "  ${f} (${hunks:-?} conflict hunk(s))"
+              summary "- \`${f}\` - ${hunks:-?} conflict hunk(s)"
+            done <<< "${CONFLICTED_FILES}"
+            summary ""
+            summary "### Upstream commits touching those files"
+            # shellcheck disable=SC2086
+            commits=$(git log --oneline --no-merges --full-history -15 HEAD..${UPSTREAM_SHA} -- ${CONFLICTED_FILES} 2>/dev/null)
+            echo "Upstream commits touching those files:"
+            echo "${commits}"
+            summary '```'
+            summary "${commits:-(none)}"
+            summary '```'
+            summary ""
+            summary "### Resolve locally"
+            summary '```bash'
+            summary "git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly --force"
+            summary "git merge ${UPSTREAM_SHA}"
+            summary "# keep BOTH sides - fork changes should be append-only overrides, never in-place"
+            summary "# edits of upstream lines (in-place edits are what makes this conflict recur)"
+            summary "git push origin ${BRANCH}"
+            summary '```'
+            [ -n "${GITHUB_OUTPUT:-}" ] && echo "upstream_conflict=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+            return 0
+          }
+
+          TARGET="${UPSTREAM_SHA}"
+          if ! merges_clean "${UPSTREAM_SHA}"; then
+            # A real merge (aborted right after) gives the conflicted files and hunk counts.
+            git merge "${UPSTREAM_SHA}" --no-commit --no-ff >/dev/null 2>&1 || true
+            report_conflict
+            git merge --abort
+            TARGET=$(newest_clean_upstream "${UPSTREAM_SHA}")
+            if [ -z "${TARGET}" ]; then
+              echo "No newer upstream commit merges cleanly - building the current branch state."
+              MISSING=$(missing_fork_markers)
+              if [ -n "${MISSING}" ]; then
+                echo "::error::Branch is missing fork code - not building."
+                echo "${MISSING}"
+                exit 1
+              fi
+              summary ""
+              summary "No newer upstream commit merges cleanly, so this run builds \`${BRANCH}\` as it is."
+              exit 0
+            fi
+            echo "Falling back to the newest cleanly-merging upstream commit: $(git log -1 --format='%h %s' "${TARGET}")"
+            summary ""
+            summary "This run builds upstream up to \`$(git log -1 --format='%h %s' "${TARGET}")\` instead."
+          fi
+
           # Up to 3 rounds: a round is only retried when the push races another push to the
           # branch, in which case we resync onto the new tip and redo the merge from there.
           MERGED=0
           for round in 1 2 3; do
-            echo "=== Merging upstream ${UPSTREAM_SHA:0:8} into ${BRANCH} (round ${round}) ==="
-            if ! git merge "${UPSTREAM_SHA}" --no-commit --no-ff; then
-              CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
-
-              # Do NOT auto-resolve. This previously ran `git checkout --ours` on every
-              # conflicted file, which silently discarded upstream's side, pushed the
-              # result to nightly-builds-with-bc, and still exited green. Each merge then
-              # started from that poisoned state and lost more upstream code. Abort
-              # instead: nothing is pushed, nothing is lost, and a human resolves it.
-              echo "::error::Upstream merge conflict - branch NOT updated, nothing pushed. Resolve locally, then re-run."
-              summary "## Upstream merge conflict"
-              summary ""
-              summary "Nothing was pushed and no build ran. Branch \`${BRANCH}\` is untouched."
-              summary ""
-              summary "Upstream tag \`nightly-builds\` = \`${UPSTREAM_SHA}\`"
-              summary ""
-              summary "### Conflicted files"
-              echo "Conflicted files:"
-              while IFS= read -r f; do
-                [ -n "$f" ] || continue
-                HUNKS=$(grep -c '^<<<<<<< ' "$f" 2>/dev/null || true)
-                echo "  ${f} (${HUNKS:-?} conflict hunk(s))"
-                summary "- \`${f}\` - ${HUNKS:-?} conflict hunk(s)"
-              done <<< "${CONFLICTED_FILES}"
-
-              summary ""
-              summary "### Upstream commits touching those files"
-              # shellcheck disable=SC2086
-              UPSTREAM_COMMITS=$(git log --oneline --no-merges -15 HEAD..${UPSTREAM_SHA} -- ${CONFLICTED_FILES} 2>/dev/null)
-              echo "Upstream commits touching those files:"
-              echo "${UPSTREAM_COMMITS}"
-              summary '```'
-              summary "${UPSTREAM_COMMITS:-(none)}"
-              summary '```'
-
-              summary ""
-              summary "### Resolve locally"
-              summary '```bash'
-              summary "git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly --force"
-              summary "git merge ${UPSTREAM_SHA}"
-              summary "# keep BOTH sides - fork changes should be append-only overrides, never in-place"
-              summary "# edits of upstream lines (in-place edits are what makes this conflict recur)"
-              summary "git push origin ${BRANCH}"
-              summary '```'
-
+            echo "=== Merging upstream ${TARGET:0:8} into ${BRANCH} (round ${round}) ==="
+            if ! git merge "${TARGET}" --no-commit --no-ff; then
+              # Only reachable when the branch moved under us between rounds; never auto-resolve.
+              echo "::error::Upstream merge conflict after resync - branch NOT updated, nothing pushed. Re-run."
               git merge --abort
-              echo ""
-              echo "To resolve locally:"
-              echo "  git fetch upstream refs/tags/nightly-builds:refs/tags/upstream-nightly --force"
-              echo "  git merge ${UPSTREAM_SHA}"
-              echo "  git push origin ${BRANCH}"
               exit 1
             fi
 
@@ -297,7 +339,7 @@ jobs:
               echo "Missing markers:"
               echo "${MISSING}"
               summary "## Upstream merge dropped fork code"
-              summary "The merge of \`${UPSTREAM_SHA:0:8}\` resolved cleanly but these fork markers vanished, so it was aborted and nothing was pushed:"
+              summary "The merge of \`${TARGET:0:8}\` resolved cleanly but these fork markers vanished, so it was aborted and nothing was pushed:"
               summary '```'
               summary "${MISSING}"
               summary '```'
@@ -305,7 +347,12 @@ jobs:
               exit 1
             fi
 
-            if ! git commit -m "Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"; then
+            if [ "${TARGET}" = "${UPSTREAM_SHA}" ]; then
+              MSG="Merge upstream nightly-builds tag (${UPSTREAM_SHA:0:8})"
+            else
+              MSG="Merge upstream up to ${TARGET:0:8} (nightly-builds tag ${UPSTREAM_SHA:0:8} conflicts)"
+            fi
+            if ! git commit -m "${MSG}"; then
               echo "::error::git commit of the merge failed - nothing pushed."
               git merge --abort 2>/dev/null || true
               exit 1
@@ -332,7 +379,7 @@ jobs:
 
           echo "Merge successful"
           summary "## Upstream merge"
-          summary "Merged upstream \`${UPSTREAM_SHA:0:8}\` into \`${BRANCH}\` and pushed."
+          summary "Merged upstream \`${TARGET:0:8}\` into \`${BRANCH}\` and pushed."
 
       - name: Get date and version
         run: |
@@ -731,3 +778,16 @@ jobs:
           **Note:** These builds are signed and notarized by Apple. You can install and run them directly without any security warnings." \
             ./artifacts/*.dmg
 
+  upstream-conflict:
+    name: Upstream conflict needs resolving
+    needs: [build_mac_arm64, release]
+    # Runs whether or not the fallback build shipped: a conflict that was skipped must stay visible.
+    if: ${{ always() && needs.build_mac_arm64.outputs.upstream_conflict != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail until the upstream conflict is resolved
+        env:
+          UPSTREAM_SHA: ${{ needs.build_mac_arm64.outputs.upstream_conflict }}
+        run: |
+          echo "::error::Upstream nightly-builds ${UPSTREAM_SHA:0:8} conflicts with nightly-builds-with-bc. This run built the newest upstream that merges cleanly; resolve the conflict (see the Build Mac ARM64 job summary) to catch up."
+          exit 1
