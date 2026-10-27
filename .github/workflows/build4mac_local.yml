@@ -434,7 +434,7 @@ jobs:
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
           echo "SDKROOT=$SDKROOT"
           ls -la "$(dirname "$SDKROOT")"
-          ./build_release_macos.sh -dx -a arm64 -1
+          ./build_release_macos.sh -dx -a arm64
           cd "${{ github.workspace }}/deps/build/arm64"
           # Spotlight/Finder can race the cleanup by writing .DS_Store into
           # the dirs we're deleting, producing "Directory not empty" errors.
@@ -494,7 +494,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-          ./build_release_macos.sh -s -n -x -a arm64 -1
+          ./build_release_macos.sh -s -n -x -a arm64
 
       - name: Sign app and notarize
         working-directory: ${{ github.workspace }}
