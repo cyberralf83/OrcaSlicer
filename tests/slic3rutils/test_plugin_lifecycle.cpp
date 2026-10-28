@@ -41,16 +41,19 @@ namespace fs = boost::filesystem;
 // -> unload.
 //
 // Each Catch2 test case runs in its own process (catch_discover_tests), so the PluginManager and
-// interpreter singletons are brought up at most once per test.
+// interpreter singletons are brought up at most once per test. Running the binary directly runs
+// every case in one process: the interpreter is then initialized once and finalized after the
+// last case (see PythonInterpreterRunEnd in slic3rutils_tests_main.cpp).
 
 namespace {
 
-// Brings the plugin system up, and tears it down explicitly at the end of the test.
+// Brings the plugin system up, and tears the manager down at the end of the test.
 //
-// Shutting the interpreter down here, rather than leaving it to PythonInterpreter's static
-// destructor, mirrors what the app does (GUI_App finalizes it before exit). Left to static
-// destruction, shutdown()'s logging runs after boost::log has torn down its thread-local storage
-// and throws, aborting the process after the tests have already passed.
+// The interpreter itself is not finalized here: it is process-wide. CPython cannot be
+// reinitialized after Py_Finalize (a second init aborts inside _datetime), and the app likewise
+// finalizes it only at exit (GUI_App). slic3rutils_tests_main.cpp finalizes it once, after the
+// last test case and before static destruction, where shutdown()'s logging is still ahead of
+// boost::log's teardown.
 //
 // Declare this FIRST in a test so it is destroyed last.
 struct ScopedPluginManager
@@ -61,11 +64,7 @@ struct ScopedPluginManager
     bool initialized = false;
 
     ScopedPluginManager() { initialized = PluginManager::instance().initialize(); }
-    ~ScopedPluginManager()
-    {
-        PluginManager::instance().shutdown();
-        PythonInterpreter::instance().shutdown();
-    }
+    ~ScopedPluginManager() { PluginManager::instance().shutdown(); }
 };
 
 // A minimal script plugin exposing exactly one capability, "Echo".
@@ -1097,6 +1096,61 @@ TEST_CASE("The bundled Python trusts the system CA certificates", "[PluginLifecy
         SKIP("Bundled Python interpreter unavailable: " + PythonInterpreter::instance().last_error());
 
     CHECK(default_context_ca_count() > 0);
+}
+
+TEST_CASE("Waiting for Python threads at shutdown gives up on a thread that does not end", "[PluginLifecycle][Python]")
+{
+    ScopedPluginManager plugin_system;
+    if (!plugin_system.initialized)
+        SKIP("Bundled Python interpreter unavailable: " + PythonInterpreter::instance().last_error());
+    pybind11::gil_scoped_acquire gil;
+
+    const pybind11::module_ threading = pybind11::module_::import("threading");
+    const pybind11::object  release   = threading.attr("Event")();
+    pybind11::object worker = threading.attr("Thread")(pybind11::arg("target") = release.attr("wait"), pybind11::arg("daemon") = false);
+    worker.attr("start")();
+
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(PythonInterpreter::join_non_daemon_threads(std::chrono::milliseconds(200)) == 1);
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
+
+    release.attr("set")();
+    CHECK(PythonInterpreter::join_non_daemon_threads(std::chrono::seconds(5)) == 0);
+}
+
+TEST_CASE("Waiting for Python threads at shutdown ends idle concurrent.futures workers", "[PluginLifecycle][Python]")
+{
+    ScopedPluginManager plugin_system;
+    if (!plugin_system.initialized)
+        SKIP("Bundled Python interpreter unavailable: " + PythonInterpreter::instance().last_error());
+    pybind11::gil_scoped_acquire gil;
+
+    const pybind11::module_ threading = pybind11::module_::import("threading");
+    const pybind11::module_ futures   = pybind11::module_::import("concurrent.futures");
+    const pybind11::module_ workers   = pybind11::module_::import("concurrent.futures.thread");
+    // The hooks that end the workers also refuse new tasks for the rest of the process; the
+    // interpreter outlives this test case.
+    const auto allow_new_tasks = [&workers] { workers.attr("_shutdown") = false; };
+
+    // An idle worker waits for its queue until the hooks tell it to end; the wait must not run out.
+    pybind11::object executor = futures.attr("ThreadPoolExecutor")(pybind11::arg("max_workers") = 1);
+    executor.attr("submit")(pybind11::module_::import("builtins").attr("int")).attr("result")();
+    auto start = std::chrono::steady_clock::now();
+    CHECK(PythonInterpreter::join_non_daemon_threads(std::chrono::seconds(5)) == 0);
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(2));
+    allow_new_tasks();
+
+    // A worker still in a task blocks the hooks; both are given up at the deadline.
+    const pybind11::object release = threading.attr("Event")();
+    executor                       = futures.attr("ThreadPoolExecutor")(pybind11::arg("max_workers") = 1);
+    executor.attr("submit")(release.attr("wait"));
+    start = std::chrono::steady_clock::now();
+    CHECK(PythonInterpreter::join_non_daemon_threads(std::chrono::milliseconds(200)) == 1);
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
+
+    release.attr("set")();
+    CHECK(PythonInterpreter::join_non_daemon_threads(std::chrono::seconds(5)) == 0);
+    allow_new_tasks();
 }
 
 #ifndef _WIN32 // Windows adds its system store whatever SSL_CERT_FILE names.

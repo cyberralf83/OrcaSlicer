@@ -157,11 +157,12 @@ jobs:
       - name: Install build tools
         if: steps.cache_deps.outputs.cache-hit != 'true'
         run: |
+          # Never uninstall Homebrew packages here: on the self-hosted Mac, Homebrew's own curl links zstd, so
+          # removing it broke every later brew download. The deps build already ignores /opt/homebrew
+          # (CMAKE_IGNORE_PREFIX_PATH in build_release_macos.sh) and builds Boost without zstd, as upstream does.
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1  # don't upgrade unrelated formulae on the runner Mac
+          brew list --formula zstd &>/dev/null || brew install zstd  # repair a runner left without it by the old uninstall step
           brew install automake texinfo libtool pkgconf # pkgconf: FFmpeg finds the bundled OpenSSL via pkg-config (upstream a5413efc37)
-          brew list
-          if brew list --formula zstd &>/dev/null; then
-            brew uninstall --ignore-dependencies zstd
-          fi
 
       - name: Build dependencies
         if: steps.cache_deps.outputs.cache-hit != 'true'
@@ -170,13 +171,12 @@ jobs:
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
           echo "SDKROOT=$SDKROOT"
           ls -la "$(dirname "$SDKROOT")"
-          ./build_release_macos.sh -dx -a arm64 -1
+          ./build_release_macos.sh -dx -a arm64
           cd "${{ github.workspace }}/deps/build/arm64"
           find . -name .DS_Store -delete 2>/dev/null || true
           find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} + 2>/dev/null || true
           find . -name .DS_Store -delete 2>/dev/null || true
           find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +
-          brew install zstd
 
       - name: Dump GMP config.log on failure
         if: failure() && steps.cache_deps.outputs.cache-hit != 'true'
@@ -226,7 +226,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-          ./build_release_macos.sh -s -n -x -a arm64 -1
+          ./build_release_macos.sh -s -n -x -a arm64
 
       - name: Sign app and notarize
         working-directory: ${{ github.workspace }}

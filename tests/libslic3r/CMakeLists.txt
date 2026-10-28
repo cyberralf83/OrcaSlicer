@@ -12,6 +12,8 @@ add_executable(${_TEST_NAME}_tests
     test_precise_seam_3mf.cpp
     # Pure perimeter extraction is independent of Print/Layer fixtures.
     test_precise_seam.cpp
+    # Contour correspondence is pure geometry; Print integration stays in fff_print.
+    test_seam_contour.cpp
     test_aabbindirect.cpp
     test_appconfig.cpp
     test_arachne_walls.cpp
@@ -23,6 +25,7 @@ add_executable(${_TEST_NAME}_tests
     test_calib.cpp
     test_clipper_offset.cpp
     test_clipper_utils.cpp
+    test_cut_connectors.cpp
     test_config.cpp
     test_config_fork.cpp
     test_config_variant_expansion.cpp
@@ -38,6 +41,7 @@ add_executable(${_TEST_NAME}_tests
     test_preset_options.cpp
     test_edge_grid.cpp
     test_elephant_foot_compensation.cpp
+    test_exclusion_volumes.cpp
     test_fill_corner_smoothing.cpp
     test_filament_mixer.cpp
     test_fill_plane_path.cpp
@@ -68,6 +72,7 @@ add_executable(${_TEST_NAME}_tests
     test_utils.cpp
     test_miniz_extension.cpp
     test_timeutils.cpp
+    test_semver.cpp
     test_voronoi.cpp
     test_wipe_tower_estimate.cpp
     test_wipe_tower.cpp
@@ -103,6 +108,10 @@ endif()
 find_package(Draco REQUIRED)
 target_link_libraries(${_TEST_NAME}_tests test_common libslic3r draco::draco Catch2::Catch2WithMain)
 target_include_directories(${_TEST_NAME}_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+if (SLIC3R_PCH AND NOT SLIC3R_SYNTAXONLY)
+    add_precompiled_header(${_TEST_NAME}_tests ${CMAKE_SOURCE_DIR}/src/libslic3r/pchheader.hpp FORCEINCLUDE)
+endif ()
+
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 orcaslicer_copy_test_dlls()
