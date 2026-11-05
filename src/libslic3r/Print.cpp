@@ -5499,10 +5499,11 @@ void Print::_make_wipe_tower()
                     wipe_volume_ec = 15.f;
                     wipe_volume_nc = 15.f;
                 }
-
                 // FORK(bbl-prime-volume): single-nozzle Bambu Lab extruders prime with the visible
                 // "Prime volume" again (upstream 407c78fb30 regression). Saving mode keeps its 15 mm3;
                 // wipe_volume_nc is only used for a carousel nozzle change, so it is left alone.
+                // No blank line above on purpose: upstream's blank line below must stay unchanged so it
+                // separates this block from the plan_toolchange() call upstream keeps editing.
                 if (m_config.prime_volume_mode != PrimeVolumeMode::pvmSaving &&
                     fork_bbl_prime_volume_applies(is_BBL_printer(), m_config.extruder_max_nozzle_count.values))
                     wipe_volume_ec = (float) m_config.prime_volume;

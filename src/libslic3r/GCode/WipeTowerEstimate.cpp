@@ -203,11 +203,12 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
         if (nozzles.size() > 1)
             purges[longest_ramming].filament_change_length = float(float_at("filament_change_length", filament_ids[longest_ramming], 0.) * double(nozzles.size() - 1));
     }
-
     // FORK(bbl-prime-volume): mirror Print::_make_wipe_tower so arrange and validation size the
     // tower that will be generated. Bambu Lab is detected by printer_model, as resolve_wipe_tower_type
     // does. extruder_max_nozzle_count is a nullable option: read it as ConfigOptionVector<int>, which
     // covers both the nullable and the plain instantiation (a ConfigOptionInts cast would always fail).
+    // No blank line above on purpose: upstream's blank line below must stay unchanged so it
+    // separates this block from upstream's statements after it.
     if (type1 && !purges.empty() &&
         opt_enum("prime_volume_mode", int(PrimeVolumeMode::pvmDefault)) != int(PrimeVolumeMode::pvmSaving)) {
         const auto *model        = dynamic_cast<const ConfigOptionString *>(config.option("printer_model"));
