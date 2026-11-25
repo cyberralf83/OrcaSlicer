@@ -3,7 +3,8 @@
 # still change the output. The merge step only checks that fork code is still present; this checks
 # that it still works, which a clean upstream merge at an override site can silently break.
 #
-# Covers FORK(gap-fill-override): gap_fill_target_override, globally and per part.
+# Covers FORK(gap-fill-override): gap_fill_target_override, globally and per part, and
+# FORK(per-part-fill-settings): small area flow compensation and the tiny-gap filter per part.
 #
 # usage: fork_smoke_test.sh <orca-slicer binary>
 set -u
@@ -24,12 +25,13 @@ EOF
 
 # 10 layers, all solid: layer 1 is the bottom surface, 10 the top surface, 2-9 internal solid infill.
 # The 0.6 mm first layer line leaves gaps for gap fill on layer 1 as well.
-process() { # name gap_fill_target gap_fill_target_override
+process() { # name gap_fill_target gap_fill_target_override [small_area_infill_flow_compensation]
     cat > "$1.json" <<EOF
 {"type":"process","from":"User","name":"fork smoke $1","layer_height":"0.2","initial_layer_print_height":"0.2",
  "initial_layer_line_width":"0.6","top_shell_layers":"5","bottom_shell_layers":"5","top_shell_thickness":"0",
  "bottom_shell_thickness":"0","wall_loops":"2","wall_generator":"arachne","enable_support":"0","skirt_loops":"0",
- "brim_type":"no_brim","filter_out_gap_fill":"0","gap_fill_target":"$2","gap_fill_target_override":"$3"}
+ "brim_type":"no_brim","filter_out_gap_fill":"0","gap_fill_target":"$2","gap_fill_target_override":"$3",
+ "small_area_infill_flow_compensation":"${4:-0}"}
 EOF
 }
 
@@ -78,6 +80,41 @@ print("left:%s right:%s" % (side(False), side(True)))
 EOF
 }
 
+# Prints "less", "more" or "same": the solid infill filament (internal solid, top and bottom surface)
+# of the right half compared with the left half. Flow compensation removes about 3% on this model and
+# the two identical parts differ by well under 0.01 mm without it, so 1 mm is a safe margin.
+right_solid_filament() { # gcode
+    "$PY" - "$1" <<'EOF'
+import re, sys
+role, relative, last_e, segs = None, False, 0.0, []
+for line in open(sys.argv[1]):
+    if line.startswith(";TYPE:"):
+        role = line[6:].strip()
+    elif line.startswith("M83"):
+        relative = True
+    elif line.startswith("M82"):
+        relative = False
+    elif line.startswith("G92"):
+        m = re.search(r"E([-\d.]+)", line)
+        if m:
+            last_e = float(m.group(1))
+    elif line.startswith("G1"):
+        mx, me = re.search(r" X([-\d.]+)", line), re.search(r" E([-\d.]+)", line)
+        if me:
+            e = float(me.group(1))
+            de = e if relative else e - last_e
+            if not relative:
+                last_e = e
+            if de > 0 and mx and role in ("Internal solid infill", "Top surface", "Bottom surface"):
+                segs.append((float(mx.group(1)), de))
+if not segs:
+    print("no solid infill found"); sys.exit(0)
+mid = (min(x for x, _ in segs) + max(x for x, _ in segs)) / 2
+left, right = sum(d for x, d in segs if x < mid), sum(d for x, d in segs if x >= mid)
+print("less" if right < left - 1 else "more" if right > left + 1 else "same")
+EOF
+}
+
 FAILED=0
 check() { # label expected actual
     if [ "$2" = "$3" ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: expected '$2', got '$3'"; FAILED=1; fi
@@ -120,26 +157,50 @@ process p_everywhere everywhere inherit
 if "$BIN" --datadir "$WORK/datadir" --load-settings "$WORK/machine.json;$WORK/p_nowhere.json" --assemble \
         --export-3mf "$WORK/two.3mf" "$WORK/wedge_a.stl" "$WORK/wedge_b.stl" > assemble.log 2>&1 \
         && mkdir two && (cd two && unzip -q ../two.3mf); then
-    part_case() { # label process override_a override_b expected
-        rm -rf "proj_$3_$4"; cp -R two "proj_$3_$4"
-        "$PY" - "proj_$3_$4/Metadata/model_settings.config" "$3" "$4" <<'EOF'
+    # Writes a per-part option into a copy of the project ("-" leaves that part alone) and slices it.
+    # Sets OUT to the G-code path.
+    part_slice() { # process option value_left value_right
+        local n="$1_$2_$3_$4"
+        OUT=""
+        rm -rf "proj_$n"; cp -R two "proj_$n"
+        "$PY" - "proj_$n/Metadata/model_settings.config" "$2" "$3" "$4" <<'EOF'
 import sys
-path, a, b = sys.argv[1:]
+path, option, a, b = sys.argv[1:]
 s = open(path).read()
 for name, value in (("wedge_a.stl", a), ("wedge_b.stl", b)):
     key = '<metadata key="name" value="%s"/>\n' % name
     assert s.count(key) == 1, "part %s not found in the project" % name
     if value != "-":
-        s = s.replace(key, key + '      <metadata key="gap_fill_target_override" value="%s"/>\n' % value)
+        s = s.replace(key, key + '      <metadata key="%s" value="%s"/>\n' % (option, value))
 open(path, "w").write(s)
 EOF
-        (cd "proj_$3_$4" && zip -q -r -X "../proj_$3_$4.3mf" '[Content_Types].xml' _rels 3D Metadata)
-        slice "$2" "$WORK/proj_$3_$4.3mf" "out_p_$2_$3_$4" || return
-        check "$1" "$5" "$(gap_layers "out_p_$2_$3_$4/plate_1.gcode")"
+        (cd "proj_$n" && zip -q -r -X "../proj_$n.3mf" '[Content_Types].xml' _rels 3D Metadata)
+        slice "$1" "$WORK/proj_$n.3mf" "out_p_$n" || return 1
+        OUT="out_p_$n/plate_1.gcode"
+    }
+    part_case() { # label process override_left override_right expected
+        part_slice "$2" gap_fill_target_override "$3" "$4" && check "$1" "$5" "$(gap_layers "$OUT")"
     }
     part_case "per part: only the right part overridden to everywhere" p_nowhere - everywhere "left:none right:$ALL"
     part_case "per part: left top, right bottom" p_everywhere top bottom "left:10 right:1"
     part_case "per part: left nowhere, right inherits everywhere" p_everywhere nowhere - "left:none right:$ALL"
+
+    # 3. FORK(per-part-fill-settings). Parts that differ only in one of these options used to share one
+    # solid fill, owned by the first (left) part, so the other part silently got the left part's value.
+    echo "fork smoke test: per-part flow compensation and tiny-gap filter"
+    process p_safc_on nowhere inherit 1
+    safc_case() { # label process value_left value_right expected
+        part_slice "$2" small_area_infill_flow_compensation "$3" "$4" && check "$1" "$5" "$(right_solid_filament "$OUT")"
+    }
+    safc_case "flow compensation: no part set (sanity: both parts alike)" p_safc_on - - same
+    safc_case "flow compensation: global off, right part on" p_nowhere - 1 less
+    safc_case "flow compensation: global on, right part off" p_safc_on - 0 more
+    safc_case "flow compensation: global on, left part off leaves the right part on" p_safc_on 0 - less
+    filter_case() { # label value_left value_right expected
+        part_slice p_everywhere filter_out_gap_fill "$2" "$3" && check "$1" "$4" "$(gap_layers "$OUT")"
+    }
+    filter_case "tiny-gap filter: right part filters everything" - 999 "left:$ALL right:none"
+    filter_case "tiny-gap filter: left part filters everything" 999 - "left:none right:$ALL"
 else
     echo "  FAIL  could not build the two-part project:"; tail -n 20 assemble.log; FAILED=1
 fi

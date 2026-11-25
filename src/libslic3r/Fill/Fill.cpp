@@ -258,6 +258,11 @@ struct SurfaceFillParams
     // FORK(gap-fill-override): ForkGapFillDecision for the surface. Part of the ordering below, so that
     // solid areas of parts with different gap fill choices are not merged into one fill.
     int fork_gap_fill = 0;
+    // FORK(per-part-fill-settings): two more region options the fill depends on after it is generated
+    // (flow compensation at G-code export, the tiny-gap filter in gap fill). A merged fill is owned by
+    // its first region, so without these every other part silently gets that region's values.
+    bool  fork_safc = false;
+    float fork_filter_out_gap_fill = 0.f;
 	// Zero based extruder ID.
     unsigned int 	extruder = 0;
 	// Infill pattern, adjusted for the density etc.
@@ -381,6 +386,9 @@ struct SurfaceFillParams
 
 		// FORK(gap-fill-override): surfaces are grouped with std::set, which only uses this operator.
 		RETURN_COMPARE_NON_EQUAL(fork_gap_fill);
+		// FORK(per-part-fill-settings)
+		RETURN_COMPARE_NON_EQUAL(fork_safc);
+		RETURN_COMPARE_NON_EQUAL(fork_filter_out_gap_fill);
 		return false;
 	}
 
@@ -1147,11 +1155,20 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 					append_density_param(lock_param.skeleton_density_params, float(0.01 * region_config.skeleton_infill_density), surface.expolygon);
 
 				}
-				// FORK(gap-fill-override): only fills dense enough to be gap filled are told apart (the same
-				// density test as Fill::_create_gap_fill), so sparse infill keeps merging across parts.
-				// Assigned for every surface: params is reused, a stale value would split sparse infill.
-				params.fork_gap_fill = float(0.01 * params.density) >= 1.f ?
-					int(fork_gap_fill_decision(region_config.gap_fill_target_override.value, surface.surface_type)) : 0;
+				// FORK(gap-fill-override, per-part-fill-settings): tell fills of different parts apart only
+				// where the option can change them, so sparse infill and bridges keep merging across parts.
+				// Every key is assigned for every surface: params is reused, a stale value would split fills.
+				{
+					const ExtrusionRole fork_role = params.extrusion_role;
+					// Gap fill needs full density (the test of Fill::_create_gap_fill) and is never made for bridges.
+					const bool fork_gap_fillable = float(0.01 * params.density) >= 1.f && fork_role != erBridgeInfill && fork_role != erInternalBridgeInfill;
+					params.fork_gap_fill = fork_gap_fillable ?
+						int(fork_gap_fill_decision(region_config.gap_fill_target_override.value, surface.surface_type)) : 0;
+					params.fork_filter_out_gap_fill = fork_gap_fillable ? float(region_config.filter_out_gap_fill.value) : 0.f;
+					// The roles SmallAreaInfillFlowCompensator::modify_flow compensates.
+					params.fork_safc = (fork_role == erSolidInfill || fork_role == erTopSolidInfill || fork_role == erBottomSurface) &&
+						region_config.small_area_infill_flow_compensation.value;
+				}
 
                 auto it_params = set_surface_params.find(params);
 

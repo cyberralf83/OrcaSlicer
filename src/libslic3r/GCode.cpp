@@ -3595,6 +3595,14 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     if (m_config.small_area_infill_flow_compensation.value && !m_config.small_area_infill_flow_compensation_model.empty())
         m_small_area_infill_flow_compensator = make_unique<SmallAreaInfillFlowCompensator>(print.config());
     
+    // FORK(per-part-fill-settings): the option is per region and _needSAFC() checks it per path, but upstream
+    // creates the compensator only when the default region has it on. Create it when any region has.
+    if (!m_small_area_infill_flow_compensator && !m_config.small_area_infill_flow_compensation_model.empty())
+        for (size_t fork_region_id = 0; fork_region_id < print.num_print_regions(); ++fork_region_id)
+            if (print.get_print_region(fork_region_id).config().small_area_infill_flow_compensation.value) {
+                m_small_area_infill_flow_compensator = make_unique<SmallAreaInfillFlowCompensator>(print.config());
+                break;
+            }
     // Prepare the helper object for replacing placeholders in custom G-code and output filename.
     m_placeholder_parser_integration.parser = print.placeholder_parser();
     m_placeholder_parser_integration.parser.update_timestamp();

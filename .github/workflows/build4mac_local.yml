@@ -152,6 +152,8 @@ jobs:
           gap_fill_target_override|src/libslic3r/Preset.cpp
           fork_gap_fill_decision|src/libslic3r/Fill/Fill.cpp
           fork_gap_fill_decision|src/libslic3r/Fill/FillBase.cpp
+          fork_safc|src/libslic3r/Fill/Fill.cpp
+          per-part-fill-settings|src/libslic3r/GCode.cpp
           fork_bbl_prime_volume_applies|src/libslic3r/GCode/WipeTowerEstimate.cpp
           fork_bbl_prime_volume_applies|src/slic3r/GUI/ConfigManipulation.cpp"
 
