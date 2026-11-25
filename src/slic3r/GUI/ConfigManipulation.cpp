@@ -62,6 +62,13 @@ static void fork_toggle_print_fff_options(ConfigManipulation &cm, const DynamicP
     for (auto el : {"interlocking_boundary_avoidance_z", "interlocking_beam_bidirectional", "interlocking_beam_skip_layers",
                     "interlocking_beam_group_count", "interlocking_beam_gap"})
         cm.toggle_line(el, use_beam_interlocking, -1, _L("Enable beam interlocking to use this setting."));
+
+    // Gap fill override: editable under the same condition as upstream's gap_fill_target
+    // (have_infill || has_solid_infill there, which reduces to this).
+    const bool have_infill_or_shell = config->option<ConfigOptionPercent>("sparse_infill_density")->value > 0 ||
+                                      config->opt_int("top_shell_layers") > 0 || config->opt_int("bottom_shell_layers") > 0;
+    cm.toggle_field("gap_fill_target_override", have_infill_or_shell, -1,
+                    _L("Use nonzero sparse infill density or top or bottom shell layers to edit this setting."));
 }
 }} // namespace Slic3r::GUI
 

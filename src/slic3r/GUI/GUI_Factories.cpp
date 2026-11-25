@@ -218,6 +218,16 @@ std::map<std::string, std::vector<SimpleSettingData>> SettingsFactory::PART_CATE
        {"internal_bridge_speed", "", 13},
        {"internal_bridge_volumetric_flow", "", 13}}}};
 
+// FORK(gap-fill-override): appended at start-up instead of inserted into upstream's initializer above, so
+// upstream can keep adding entries there without a merge conflict. Runs after the map is built: both are
+// in this file, in this order.
+static struct ForkPartCategorySettingsAppender {
+    ForkPartCategorySettingsAppender()
+    {
+        SettingsFactory::PART_CATEGORY_SETTINGS[L("Strength")].push_back({"gap_fill_target_override", "", 1});
+    }
+} s_fork_part_category_settings_appender;
+
 std::vector<std::string> SettingsFactory::get_options(const bool is_part)
 {
     if (printer_technology() == ptSLA) {

@@ -500,6 +500,14 @@ jobs:
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
           ./build_release_macos.sh -s -n -x -a arm64
 
+      - name: Fork smoke test
+        # Slices a tiny model with the fresh binary and fails the build if a fork feature no longer
+        # changes the output. The merge step's marker check only proves the code is still there.
+        working-directory: ${{ github.workspace }}
+        timeout-minutes: 10
+        run: |
+          .github/scripts/fork_smoke_test.sh "${{ github.workspace }}/build/arm64/OrcaSlicer/OrcaSlicer.app/Contents/MacOS/OrcaSlicer"
+
       - name: Sign app and notarize
         working-directory: ${{ github.workspace }}
         env:
