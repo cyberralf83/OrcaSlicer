@@ -14,13 +14,14 @@ OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio. Bui
 ## This Fork
 
 - Tracks upstream OrcaSlicer (`SoftFever/OrcaSlicer`) nightly builds, merged every few days
-- Custom code is limited to six fork features plus the CI workflows to build them:
+- Custom code is limited to seven fork features plus the CI workflows to build them:
   1. **Bambu Connect export plugin** (see below)
   2. **Minimum Chute Flush** — `minimal_chute_flush_length` (see below)
   3. **Seam hide at part interface** — `seam_hide_at_interface`, `seam_interface_depth`, `seam_interface_skip_bottom_layers`; decision logic in `SeamPlacerImpl::seam_point_is_embedded_enough` (SeamPlacer.cpp/hpp)
   4. **Flush-into-infill minimum layer** — `flush_into_infill_min_layer` gate in `ToolOrdering.cpp` (+ PrintConfig/Preset/PrintObject/Tab/ConfigManipulation/GUI_Factories)
   5. **Interlocking beam controls** — `interlocking_boundary_avoidance_z`, `interlocking_beam_bidirectional`, `interlocking_beam_skip_layers`, `interlocking_beam_group_count`, `interlocking_beam_gap` in `Feature/Interlocking/InterlockingGenerator.cpp/hpp`
   6. **BBL prime volume** — `FORK(bbl-prime-volume)`: the Type1 tower primes with `prime_volume` again on single-nozzle Bambu Lab printers (see below)
+  7. **Gap fill override** — `FORK(gap-fill-override)`: `gap_fill_target_override`, a per-part override of upstream's `gap_fill_target` with extra "top only" / "bottom only" choices (see below)
 - **Do NOT make changes unrelated to these features**
 - Keep the diff from upstream as minimal as possible. Fork-only tests go in `tests/libslic3r/test_config_fork.cpp` (registered in that suite's CMakeLists.txt), NEVER in upstream-owned test files — upstream test files must stay byte-identical to upstream so scheduled merges don't conflict. Same rule for `AGENTS.md`: it is upstream's file; fork context lives only in `CLAUDE.md`.
 - **Prefer append-only fork changes over in-place edits of upstream lines, and leave at least one unchanged line of separation.** Measured with `git merge-file`: a fork block with **zero** unchanged lines between it and the line upstream edits still conflicts; **one** separator line merges cleanly. So "I didn't touch upstream's line" is necessary but NOT sufficient — a mid-list insertion pressed against upstream's terminating line buys nothing. When a fork feature must change upstream behaviour, leave upstream's statement byte-identical and add a marked `// FORK(<feature>):` block that overrides the result, with a blank line or comment between them.
@@ -86,6 +87,20 @@ upstream's `test_wipe_tower_estimate.cpp` green).
 - Tests: `[BblPrimeVolume]` in `test_config_fork.cpp`. The generated tower can only be verified by slicing (prime_volume P after the fix == every filament_prime_volume P before it, byte for byte).
 - Docs: `docs/superpowers/specs/2026-10-01-bbl-prime-volume-regression-design.md`, plan + review alongside. Drop the fork blocks once upstream fixes both the tower and the estimate.
 
+### Gap fill override (`FORK(gap-fill-override)`)
+
+Upstream's "Apply gap fill" (`gap_fill_target`: everywhere / top and bottom / nowhere) is a `PrintObjectConfig` option, so it
+cannot be set on a part or modifier. The fork leaves it untouched and adds `gap_fill_target_override`, a `PrintRegionConfig`
+enum (`ForkGapFillOverride`: `inherit` default, `everywhere`, `topbottom`, `top`, `bottom`, `nowhere`). Region level makes it
+settable per object, part, modifier and layer range with no GUI plumbing (`TabPrintPart` takes every region key). On `inherit`
+upstream's option decides, so untouched projects slice as upstream does.
+- Rule: `src/libslic3r/Fill/ForkGapFill.hpp` (fork-owned header) — `fork_gap_fill_decision(override, surface_type)` returns Inherit / Allow / Deny. `topbottom` is upstream's rule (`!= stInternalSolid`); `top` is `stTop`; `bottom` is `stBottom` or `stBottomBridge`.
+- `Fill/FillBase.cpp` (`Fill::_create_gap_fill`): a marked block right above upstream's `gap_fill_target` check. Deny returns; the block's last line is `if (decision == Inherit)` and guards upstream's untouched `if`, so nothing may come between them. A clean merge there needs a look.
+- `Fill/Fill.cpp` (`group_fills`): `SurfaceFillParams::fork_gap_fill` holds the decision and is compared in `operator<` only (surfaces are grouped with a `std::set`; `operator==` is not used for grouping and is left as upstream's). Without it, solid areas of two parts that otherwise match are merged into one fill and the first part's choice wins. It is non-zero only when density is 100%, so sparse infill still merges across parts; it is assigned for every surface because `params` is reused across the loop.
+- Also: `PrintConfig.cpp/hpp`, `Preset.cpp` (fork appender), `Tab.cpp` (row under "Apply gap fill"), `Plater.cpp` (flow-rate calibration forces `gap_fill_target` to nowhere on its objects; the fork line resets the override to inherit there so a preset override cannot bring gap fill back). No invalidation entry: like `gap_fill_target` it falls into the "invalidate all steps" default of `PrintObject::invalidate_state_by_config_options`.
+- Projects that store `top` / `bottom` (or any override) lose it in stock Orca, which does not know the key.
+- Tests: `[GapFillOverride]` in `test_config_fork.cpp` (registration, value names, decision table). The generated gap fill can only be verified by slicing.
+
 ### CI Workflows
 
 Two macOS workflows, both producing signed + notarized DMGs published to the `nightly-mac-arm64` GitHub release:
@@ -100,7 +115,7 @@ Two macOS workflows, both producing signed + notarized DMGs published to the `ni
 
 **The `Fetch and merge upstream nightly-builds` step is identical in both workflows — keep them in sync.** Its contract:
 - Never auto-resolves (an earlier `git checkout --ours` version silently discarded upstream code and still went green). On conflict it writes a job summary (conflicted files, hunk counts, the upstream commits that touched them, resolve commands), then **falls back to the newest upstream first-parent commit that merges cleanly** (binary search with `git merge-tree`), merges and pushes that, and the build ships. If nothing newer merges cleanly it builds the branch as-is. Either way the `upstream-conflict` job turns the run red until a human resolves the conflict, so the DMG keeps tracking upstream as far as it can without the conflict going unnoticed.
-- Verifies the fork's feature markers (`eSendBambuConnect`, `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT`, `on_action_send_bamcu_conect`, `minimal_chute_flush_length`, `seam_hide_at_interface`, `flush_into_infill_min_layer`, `interlocking_beam_bidirectional`, `fork_bbl_prime_volume_applies`) still exist in the merged tree before committing — a clean merge that drops fork code is aborted too. Add a marker here when adding a fork feature.
+- Verifies the fork's feature markers (`eSendBambuConnect`, `EVT_GLTOOLBAR_SEND_BAMBU_CONNECT`, `on_action_send_bamcu_conect`, `minimal_chute_flush_length`, `seam_hide_at_interface`, `flush_into_infill_min_layer`, `interlocking_beam_bidirectional`, `fork_bbl_prime_volume_applies`, `gap_fill_target_override`, `fork_gap_fill_decision`) still exist in the merged tree before committing — a clean merge that drops fork code is aborted too. Add a marker here when adding a fork feature.
 - Retries the upstream tag fetch (3×) so a network blip doesn't kill the build, clears a stale `MERGE_HEAD` left by a killed run on the self-hosted runner, and redoes the merge on top of the new tip if the push races another push (3 rounds).
 
 ### Self-hosted runner setup (Mac ARM64)

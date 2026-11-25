@@ -456,6 +456,11 @@ enum EnableExtraBridgeLayer {
 enum GapFillTarget {
      gftEverywhere, gftTopBottom, gftNowhere
  };
+// FORK(gap-fill-override): region level override of gap_fill_target, see Fill/ForkGapFill.hpp.
+// Append new values at the end only: the order is the order of the combo box.
+enum ForkGapFillOverride {
+    fgfoInherit, fgfoEverywhere, fgfoTopBottom, fgfoTop, fgfoBottom, fgfoNowhere
+};
 
 
 enum LiftType {
@@ -868,6 +873,8 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(InfillStrategy)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(AdaptiveInfillMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(AdaptiveInfillGradient)
 
+// FORK(gap-fill-override)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ForkGapFillOverride)
 #undef CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS
 
 // Defines each and every configuration option of Slic3r, including the properties of the GUI dialogs.
@@ -1496,6 +1503,8 @@ PRINT_CONFIG_CLASS_DEFINE(
 PRINT_CONFIG_CLASS_DEFINE(
     PrintRegionConfig,
 
+    // FORK(gap-fill-override)
+    ((ConfigOptionEnum<ForkGapFillOverride>, gap_fill_target_override))
     ((ConfigOptionInts,  print_extruder_id))
     ((ConfigOptionStrings,  print_extruder_variant))
     ((ConfigOptionInt,                  bottom_shell_layers))

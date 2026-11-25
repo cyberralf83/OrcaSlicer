@@ -555,6 +555,16 @@ static t_config_enum_values s_keys_map_GapFillTarget {
     { "nowhere",           gftNowhere },
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(GapFillTarget)
+// FORK(gap-fill-override)
+static t_config_enum_values s_keys_map_ForkGapFillOverride {
+    { "inherit",    fgfoInherit },
+    { "everywhere", fgfoEverywhere },
+    { "topbottom",  fgfoTopBottom },
+    { "top",        fgfoTop },
+    { "bottom",     fgfoBottom },
+    { "nowhere",    fgfoNowhere },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ForkGapFillOverride)
 
 static const t_config_enum_values s_keys_map_SLADisplayOrientation = {
     { "landscape",      sladoLandscape},
@@ -1602,6 +1612,34 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Nowhere"));
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<GapFillTarget>(gftNowhere));
+    // FORK(gap-fill-override): a region level option, so it can be set per part, modifier and layer range.
+    def = this->add("gap_fill_target_override", coEnum);
+    def->label = L("Gap fill override");
+    def->category = L("Strength");
+    def->tooltip = L("Overrides \"Apply gap fill\" and can be set on a single part or modifier.\n\n"
+                     "Options:\n"
+                     "1. Inherit: Follows the \"Apply gap fill\" setting\n"
+                     "2. Everywhere: Applies gap fill to top, bottom and internal solid surfaces\n"
+                     "3. Top and bottom surfaces: Applies gap fill to top and bottom surfaces only\n"
+                     "4. Top surfaces: Applies gap fill to top surfaces only\n"
+                     "5. Bottom surfaces: Applies gap fill to bottom surfaces only\n"
+                     "6. Nowhere: Disables gap fill for all solid infill areas\n\n"
+                     "Gap fill generated between perimeters by the classic perimeter generator is not controlled by this setting.");
+    def->enum_keys_map = &ConfigOptionEnum<ForkGapFillOverride>::get_enum_values();
+    def->enum_values.push_back("inherit");
+    def->enum_values.push_back("everywhere");
+    def->enum_values.push_back("topbottom");
+    def->enum_values.push_back("top");
+    def->enum_values.push_back("bottom");
+    def->enum_values.push_back("nowhere");
+    def->enum_labels.push_back(L("Inherit"));
+    def->enum_labels.push_back(L("Everywhere"));
+    def->enum_labels.push_back(L("Top and bottom surfaces"));
+    def->enum_labels.push_back(L("Top surfaces"));
+    def->enum_labels.push_back(L("Bottom surfaces"));
+    def->enum_labels.push_back(L("Nowhere"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<ForkGapFillOverride>(fgfoInherit));
 
     def = this->add("enable_overhang_bridge_fan", coBools);
     def->label = L("Force cooling for overhangs and bridges");

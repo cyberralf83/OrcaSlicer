@@ -17779,6 +17779,8 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
         _obj->config.set_key_value("top_surface_speed", new ConfigOptionFloatsNullable(top_surface_speeds));
         _obj->config.set_key_value("seam_slope_type", new ConfigOptionEnum<SeamScarfType>(SeamScarfType::None));
         _obj->config.set_key_value("gap_fill_target", new ConfigOptionEnum<GapFillTarget>(GapFillTarget::gftNowhere));
+        // FORK(gap-fill-override): a process preset override would win over the line above.
+        _obj->config.set_key_value("gap_fill_target_override", new ConfigOptionEnum<ForkGapFillOverride>(fgfoInherit));
         print_config->set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloat(0));
         // ORCA: the speeds above are linear, and no calibration mode switches volumetric speeds off here.
         print_config->set_key_value("enable_volumetric_speeds", new ConfigOptionBool(false));

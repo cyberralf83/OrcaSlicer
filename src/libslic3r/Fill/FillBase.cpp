@@ -48,6 +48,8 @@
 #include "FillConcentricInternal.hpp"
 #include "FillCrossHatch.hpp"
 #include "libslic3r/Polyline.hpp"
+// FORK(gap-fill-override)
+#include "libslic3r/Fill/ForkGapFill.hpp"
 #include "libslic3r/ShortestPath.hpp"
 #include "libslic3r/Line.hpp"
 #include "libslic3r/Polygon.hpp"
@@ -343,6 +345,14 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
     //Orca: just to be safe, check against null pointer for the print object config and if NULL return.
     if (this->print_object_config == nullptr) return;
 
+    // FORK(gap-fill-override): a part level override decides instead of upstream's object level check.
+    // The last line of this block guards upstream's `if` right below: on "inherit" that check runs
+    // unchanged, on an override it is skipped. Nothing may be inserted between this block and that `if`.
+    const ForkGapFillDecision fork_decision = params.config == nullptr ? ForkGapFillDecision::Inherit :
+        fork_gap_fill_decision(params.config->gap_fill_target_override.value, surface->surface_type);
+    if (fork_decision == ForkGapFillDecision::Deny)
+        return;
+    if (fork_decision == ForkGapFillDecision::Inherit)
     // Orca: Enable gap fill as per the user preference. Return early if gap fill is to not be applied.
     if ((this->print_object_config->gap_fill_target.value == gftNowhere) ||
         (surface->surface_type == stInternalSolid && this->print_object_config->gap_fill_target.value != gftEverywhere))

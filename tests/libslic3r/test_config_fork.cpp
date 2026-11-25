@@ -9,9 +9,13 @@
 #include "libslic3r/GCode/ForkPrimeVolume.hpp"
 #include "libslic3r/GCode/WipeTower.hpp"
 #include "libslic3r/GCode/WipeTowerEstimate.hpp"
+#include "libslic3r/Fill/ForkGapFill.hpp"
 
 #include <algorithm>
 #include <limits>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace Slic3r;
 
@@ -169,4 +173,64 @@ TEST_CASE("Type1 estimate sizes single-nozzle Bambu Lab towers from prime_volume
 TEST_CASE("prime_volume stays in the print preset whitelist", "[Config][BblPrimeVolume]") {
     const std::vector<std::string> &po = Slic3r::Preset::print_options();
     REQUIRE(std::find(po.begin(), po.end(), std::string("prime_volume")) != po.end());
+}
+
+// "Gap fill override" (FORK(gap-fill-override)): a region level override of upstream's object level
+// gap_fill_target, adding "top only" and "bottom only".
+TEST_CASE("gap_fill_target_override registration", "[Config][GapFillOverride]") {
+    const DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    REQUIRE(config.has("gap_fill_target_override"));
+    // "inherit" must stay the default: it is what keeps untouched projects slicing as upstream does.
+    CHECK(config.opt_enum<ForkGapFillOverride>("gap_fill_target_override") == fgfoInherit);
+    // Upstream's own option is left alone.
+    REQUIRE(config.has("gap_fill_target"));
+
+    // Region level is what makes it settable per part, modifier and layer range.
+    const t_config_option_keys region_keys = PrintRegionConfig().keys();
+    CHECK(std::find(region_keys.begin(), region_keys.end(), std::string("gap_fill_target_override")) != region_keys.end());
+    const t_config_option_keys object_keys = PrintObjectConfig().keys();
+    CHECK(std::find(object_keys.begin(), object_keys.end(), std::string("gap_fill_target_override")) == object_keys.end());
+
+    const std::vector<std::string> &po = Slic3r::Preset::print_options();
+    CHECK(std::find(po.begin(), po.end(), std::string("gap_fill_target_override")) != po.end());
+}
+
+TEST_CASE("gap_fill_target_override values round-trip by name", "[Config][GapFillOverride]") {
+    // The names are what projects and presets store: renaming one loses the saved choice.
+    const std::vector<std::pair<std::string, ForkGapFillOverride>> values = {
+        {"inherit", fgfoInherit}, {"everywhere", fgfoEverywhere}, {"topbottom", fgfoTopBottom},
+        {"top", fgfoTop},         {"bottom", fgfoBottom},         {"nowhere", fgfoNowhere},
+    };
+    for (const auto &[name, value] : values) {
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set_deserialize_strict("gap_fill_target_override", name);
+        CHECK(config.opt_enum<ForkGapFillOverride>("gap_fill_target_override") == value);
+        CHECK(config.opt_serialize("gap_fill_target_override") == name);
+    }
+}
+
+TEST_CASE("fork_gap_fill_decision per surface type", "[Config][GapFillOverride]") {
+    using D = ForkGapFillDecision;
+    const std::vector<SurfaceType> surfaces = {stTop, stBottom, stBottomBridge, stInternalSolid};
+
+    for (SurfaceType st : surfaces) {
+        CHECK(fork_gap_fill_decision(fgfoInherit, st) == D::Inherit);
+        CHECK(fork_gap_fill_decision(fgfoEverywhere, st) == D::Allow);
+        CHECK(fork_gap_fill_decision(fgfoNowhere, st) == D::Deny);
+    }
+
+    CHECK(fork_gap_fill_decision(fgfoTopBottom, stTop) == D::Allow);
+    CHECK(fork_gap_fill_decision(fgfoTopBottom, stBottom) == D::Allow);
+    CHECK(fork_gap_fill_decision(fgfoTopBottom, stBottomBridge) == D::Allow);
+    CHECK(fork_gap_fill_decision(fgfoTopBottom, stInternalSolid) == D::Deny);
+
+    CHECK(fork_gap_fill_decision(fgfoTop, stTop) == D::Allow);
+    CHECK(fork_gap_fill_decision(fgfoTop, stBottom) == D::Deny);
+    CHECK(fork_gap_fill_decision(fgfoTop, stBottomBridge) == D::Deny);
+    CHECK(fork_gap_fill_decision(fgfoTop, stInternalSolid) == D::Deny);
+
+    CHECK(fork_gap_fill_decision(fgfoBottom, stTop) == D::Deny);
+    CHECK(fork_gap_fill_decision(fgfoBottom, stBottom) == D::Allow);
+    CHECK(fork_gap_fill_decision(fgfoBottom, stBottomBridge) == D::Allow);
+    CHECK(fork_gap_fill_decision(fgfoBottom, stInternalSolid) == D::Deny);
 }

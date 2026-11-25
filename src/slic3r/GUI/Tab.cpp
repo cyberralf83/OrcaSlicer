@@ -3239,6 +3239,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("solid_infill_direction", "strength_settings_infill#direction");
         optgroup->append_single_option_line("solid_infill_rotate_template", "strength_settings_infill_rotation_template_metalanguage");
         optgroup->append_single_option_line("gap_fill_target", "strength_settings_infill#apply-gap-fill");
+        optgroup->append_single_option_line("gap_fill_target_override", "strength_settings_infill#apply-gap-fill"); // FORK(gap-fill-override)
         optgroup->append_single_option_line("filter_out_gap_fill", "strength_settings_infill#filter-out-tiny-gaps");
         optgroup->append_single_option_line("separated_infills", "strength_settings_infill#separated-infills");
         optgroup->append_single_option_line("infill_wall_overlap", "strength_settings_infill#infill-wall-overlap");

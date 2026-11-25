@@ -1537,7 +1537,7 @@ static std::vector<std::string> s_Preset_print_options{
     "ironing_expansion",
 };
 
-// FORK(seam-hide-at-interface, flush-into-infill-min-layer, min-chute-flush, interlocking-beam):
+// FORK(seam-hide-at-interface, flush-into-infill-min-layer, min-chute-flush, interlocking-beam, gap-fill-override):
 // fork-feature options are appended here instead of being inserted into upstream's initializer
 // above. Mid-list insertions sit pressed against upstream's lines and conflict whenever upstream
 // inserts at the same anchor (scheduled-merge run 32801164618 died on exactly that). Membership,
@@ -1555,6 +1555,7 @@ static struct ForkPresetPrintOptionsAppender {
             "interlocking_beam_skip_layers",
             "interlocking_beam_group_count",
             "interlocking_beam_gap",
+            "gap_fill_target_override",
         });
     }
 } s_fork_Preset_print_options_appender;

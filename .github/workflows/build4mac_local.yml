@@ -148,6 +148,10 @@ jobs:
           interlocking_beam_gap|src/slic3r/GUI/ConfigManipulation.cpp
           fork_toggle_print_fff_options|src/slic3r/GUI/ConfigManipulation.cpp
           fork_bbl_prime_volume_applies|src/libslic3r/Print.cpp
+          gap_fill_target_override|src/libslic3r/PrintConfig.cpp
+          gap_fill_target_override|src/libslic3r/Preset.cpp
+          fork_gap_fill_decision|src/libslic3r/Fill/Fill.cpp
+          fork_gap_fill_decision|src/libslic3r/Fill/FillBase.cpp
           fork_bbl_prime_volume_applies|src/libslic3r/GCode/WipeTowerEstimate.cpp
           fork_bbl_prime_volume_applies|src/slic3r/GUI/ConfigManipulation.cpp"
 

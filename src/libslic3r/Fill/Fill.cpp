@@ -48,6 +48,8 @@
 #include "libslic3r/MultiMaterialSegmentation.hpp"
 #include "libslic3r/Slicing.hpp"
 #include "libslic3r/SurfaceCollection.hpp"
+// FORK(gap-fill-override)
+#include "libslic3r/Fill/ForkGapFill.hpp"
 
 namespace Slic3r::FillAdaptive { struct Octree; }
 namespace Slic3r::FillLightning { class Generator; }
@@ -253,6 +255,9 @@ double calculate_infill_rotation_angle(const PrintObject* object,
 
 struct SurfaceFillParams
 {
+    // FORK(gap-fill-override): ForkGapFillDecision for the surface. Part of the ordering below, so that
+    // solid areas of parts with different gap fill choices are not merged into one fill.
+    int fork_gap_fill = 0;
 	// Zero based extruder ID.
     unsigned int 	extruder = 0;
 	// Infill pattern, adjusted for the density etc.
@@ -374,6 +379,8 @@ struct SurfaceFillParams
         RETURN_COMPARE_NON_EQUAL(separated_infills);
 		RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, fill_order);
 
+		// FORK(gap-fill-override): surfaces are grouped with std::set, which only uses this operator.
+		RETURN_COMPARE_NON_EQUAL(fork_gap_fill);
 		return false;
 	}
 
@@ -1140,6 +1147,11 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 					append_density_param(lock_param.skeleton_density_params, float(0.01 * region_config.skeleton_infill_density), surface.expolygon);
 
 				}
+				// FORK(gap-fill-override): only fills dense enough to be gap filled are told apart (the same
+				// density test as Fill::_create_gap_fill), so sparse infill keeps merging across parts.
+				// Assigned for every surface: params is reused, a stale value would split sparse infill.
+				params.fork_gap_fill = float(0.01 * params.density) >= 1.f ?
+					int(fork_gap_fill_decision(region_config.gap_fill_target_override.value, surface.surface_type)) : 0;
 
                 auto it_params = set_surface_params.find(params);
 
